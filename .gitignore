@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Secrets & runtime data — NEVER commit (bot tokens, admin hash, sessions, cached messages)
+.env
+db/
+
+# Local tooling / editor state
+.claude/
+*.log
+.DS_Store

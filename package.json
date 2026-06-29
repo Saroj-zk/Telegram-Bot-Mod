@@ -1,0 +1,27 @@
+{
+  "name": "telegram-moderator-bot",
+  "version": "1.0.0",
+  "description": "Telegram Group Moderation Bot with a Premium Web-based Dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "moderator",
+    "anti-spam",
+    "anti-raid",
+    "dashboard"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "telegraf": "^4.16.3"
+  }
+}

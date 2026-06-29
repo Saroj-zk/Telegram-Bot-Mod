@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OctoGod - Telegram Moderation Panel</title>
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐙</text></svg>">
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Background Ambient Lights -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+
+  <!-- CREATE ADMIN (First-time setup) -->
+  <div id="create-admin-modal" class="modal-overlay hidden">
+    <div class="setup-card glass">
+      <div class="setup-header">
+        <div class="logo-icon"><i class="fa-solid fa-user-shield"></i></div>
+        <h2>Create Admin Account</h2>
+        <p>This is the only account that can access the OctoGod dashboard.</p>
+      </div>
+
+      <form id="create-admin-form">
+        <div class="input-group">
+          <label for="ca-username"><i class="fa-solid fa-user"></i> Username</label>
+          <input type="text" id="ca-username" minlength="3" maxlength="32" required autocomplete="username">
+        </div>
+        <div class="input-group">
+          <label for="ca-password"><i class="fa-solid fa-lock"></i> Password (min 8 chars)</label>
+          <input type="password" id="ca-password" minlength="8" maxlength="256" required autocomplete="new-password">
+        </div>
+        <div class="input-group">
+          <label for="ca-password-confirm"><i class="fa-solid fa-lock"></i> Confirm Password</label>
+          <input type="password" id="ca-password-confirm" minlength="8" maxlength="256" required autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">
+          <span>Create Account & Sign In</span> <i class="fa-solid fa-arrow-right-to-bracket"></i>
+        </button>
+      </form>
+      <div class="setup-footer">
+        <p><i class="fa-solid fa-triangle-exclamation"></i> Pick a strong password. You can change it later under System Settings.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOGIN -->
+  <div id="login-modal" class="modal-overlay hidden">
+    <div class="setup-card glass">
+      <div class="setup-header">
+        <div class="logo-icon"><i class="fa-solid fa-shield-halved"></i></div>
+        <h2>Sign In</h2>
+        <p>Restricted to OctoGod administrators.</p>
+      </div>
+
+      <form id="login-form">
+        <div class="input-group">
+          <label for="login-username"><i class="fa-solid fa-user"></i> Username</label>
+          <input type="text" id="login-username" required autocomplete="username">
+        </div>
+        <div class="input-group">
+          <label for="login-password"><i class="fa-solid fa-lock"></i> Password</label>
+          <input type="password" id="login-password" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">
+          <span>Sign In</span> <i class="fa-solid fa-arrow-right-to-bracket"></i>
+        </button>
+      </form>
+      <div class="setup-footer">
+        <p><i class="fa-solid fa-shield"></i> Sessions expire after 7 days of inactivity, or instantly on bot restart.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- SETUP WIZARD (Displayed if no token) -->
+  <div id="setup-wizard" class="modal-overlay hidden">
+    <div class="setup-card glass">
+      <div class="setup-header">
+        <div class="logo-icon"><i class="fa-solid fa-shield-halved"></i></div>
+        <h2>OctoGod Setup</h2>
+        <p>Protect your Telegram group with premium moderation in minutes.</p>
+      </div>
+      
+      <form id="token-form">
+        <div class="input-group">
+          <label for="bot-token"><i class="fa-solid fa-key"></i> Telegram Bot Token</label>
+          <input type="password" id="bot-token" placeholder="1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ" required>
+          <span class="input-hint">Generate one by messaging <a href="https://t.me/BotFather" target="_blank">@BotFather</a> on Telegram.</span>
+        </div>
+        
+        <button type="submit" class="btn btn-primary btn-block">
+          <span>Save & Initialize Bot</span> <i class="fa-solid fa-arrow-right-to-bracket"></i>
+        </button>
+      </form>
+
+      <div class="setup-footer">
+        <p><i class="fa-solid fa-circle-info"></i> Make sure to add your bot as an **Administrator** in your group with permissions to delete messages and restrict members.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN APP CONTAINER -->
+  <div id="app-container" class="app-layout hidden">
+    
+    <!-- SIDEBAR -->
+    <aside class="sidebar glass">
+      <div class="sidebar-brand">
+        <div class="brand-logo"><i class="fa-solid fa-shield-halved"></i></div>
+        <div class="brand-text">
+          <h1>OctoGod</h1>
+          <span>Bot Moderator</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-menu">
+        <a href="#" class="menu-item active" data-tab="tab-overview">
+          <i class="fa-solid fa-chart-line"></i> <span>Overview</span>
+        </a>
+        <a href="#" class="menu-item" data-tab="tab-rules">
+          <i class="fa-solid fa-sliders"></i> <span>Moderation Rules</span>
+        </a>
+        <a href="#" class="menu-item" data-tab="tab-terminal">
+          <i class="fa-solid fa-terminal"></i> <span>Live Terminal</span>
+        </a>
+        <a href="#" class="menu-item" data-tab="tab-moderation">
+          <i class="fa-solid fa-user-shield"></i> <span>User Database</span>
+        </a>
+        <a href="#" class="menu-item" data-tab="tab-settings">
+          <i class="fa-solid fa-cog"></i> <span>System Settings</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-status glass-inner">
+        <div class="status-indicator-dot" id="status-dot"></div>
+        <div class="status-info">
+          <span class="status-label">Bot Status</span>
+          <span class="status-value" id="status-text">Connecting...</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+      
+      <!-- HEADER -->
+      <header class="content-header">
+        <div class="header-title">
+          <h2 id="current-tab-title">Overview Dashboard</h2>
+          <p id="current-tab-desc">Monitor your Telegram community health and stats.</p>
+        </div>
+        
+        <div class="header-actions">
+          <button class="btn btn-secondary btn-icon-only" id="theme-toggle" title="Toggle Theme">
+            <i class="fa-solid fa-moon"></i>
+          </button>
+          <button class="btn btn-outline" id="quick-action-status">
+            <i class="fa-solid fa-circle-play"></i> <span id="quick-action-text">Stop Bot</span>
+          </button>
+          <button class="btn btn-secondary btn-icon-only" id="logout-btn" title="Sign Out">
+            <i class="fa-solid fa-right-from-bracket"></i>
+          </button>
+        </div>
+      </header>
+
+      <!-- PANELS (TABS) -->
+      
+      <!-- OVERVIEW PANEL -->
+      <div id="tab-overview" class="tab-panel active">
+        <!-- STATS GRID -->
+        <div class="stats-grid">
+          <div class="stat-card glass">
+            <div class="stat-icon message-color"><i class="fa-solid fa-comments"></i></div>
+            <div class="stat-details">
+              <span class="stat-label">Messages Processed</span>
+              <h3 class="stat-value" id="stat-messages">0</h3>
+            </div>
+          </div>
+          
+          <div class="stat-card glass">
+            <div class="stat-icon spam-color"><i class="fa-solid fa-hand-holding-hand"></i></div>
+            <div class="stat-details">
+              <span class="stat-label">Spam Intercepted</span>
+              <h3 class="stat-value" id="stat-spam">0</h3>
+            </div>
+          </div>
+
+          <div class="stat-card glass">
+            <div class="stat-icon link-color"><i class="fa-solid fa-link-slash"></i></div>
+            <div class="stat-details">
+              <span class="stat-label">Links Blocked</span>
+              <h3 class="stat-value" id="stat-links">0</h3>
+            </div>
+          </div>
+
+          <div class="stat-card glass">
+            <div class="stat-icon warn-color"><i class="fa-solid fa-triangle-exclamation"></i></div>
+            <div class="stat-details">
+              <span class="stat-label">Warnings Issued</span>
+              <h3 class="stat-value" id="stat-warns">0</h3>
+            </div>
+          </div>
+        </div>
+
+        <div class="overview-layout">
+          <!-- MAIN COLUMN -->
+          <div class="main-column flex-grow">
+            <!-- QUICK CONTROLS -->
+            <div class="overview-box glass">
+              <h3>🛡️ Quick Controls</h3>
+            <div class="controls-grid">
+              <div class="control-card glass-inner">
+                <h4>Welcome Messages</h4>
+                <p>Welcome new users dynamically when they join.</p>
+                <div class="toggle-switch-wrapper">
+                  <span class="toggle-status" id="quick-welcome-label">Loading...</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="quick-welcome-toggle">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="control-card glass-inner">
+                <h4>Anti-Spam Shield</h4>
+                <p>Block spam bursts and rate limit messages.</p>
+                <div class="toggle-switch-wrapper">
+                  <span class="toggle-status" id="quick-spam-label">Loading...</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="quick-spam-toggle">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="control-card glass-inner">
+                <h4>Link Moderation</h4>
+                <p>Allow links only from administrators.</p>
+                <div class="toggle-switch-wrapper">
+                  <span class="toggle-status" id="quick-link-label">Loading...</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="quick-link-toggle">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="control-card glass-inner">
+                <h4>Anti-Raid Mode</h4>
+                <p>Detect and restrict mass join attacks.</p>
+                <div class="toggle-switch-wrapper">
+                  <span class="toggle-status" id="quick-raid-label">Loading...</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="quick-raid-toggle">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ROUTINE SCAN CARD -->
+          <div class="overview-box glass">
+            <h3>🧹 Routine Scan</h3>
+            <p>Re-apply current moderation rules to messages the bot has cached. Use it after updating the blacklist or to clean up old spam.</p>
+            <div class="controls-grid routine-grid">
+              <div class="control-card glass-inner routine-card">
+                <h4>Window</h4>
+                <select id="scan-duration-select">
+                  <option value="1">Last 1 hour</option>
+                  <option value="6">Last 6 hours</option>
+                  <option value="24" selected>Last 24 hours</option>
+                  <option value="72">Last 3 days</option>
+                  <option value="168">Last 7 days</option>
+                  <option value="720">Last 30 days</option>
+                  <option value="custom">Custom…</option>
+                </select>
+                <input type="number" id="scan-duration-custom" min="1" max="8760" placeholder="hours" style="display:none; margin-top:8px">
+              </div>
+              <div class="control-card glass-inner routine-card">
+                <h4>Run Scan</h4>
+                <button class="btn btn-primary btn-block" id="btn-routine-scan">
+                  <i class="fa-solid fa-broom"></i> <span id="btn-routine-scan-label">Scan now</span>
+                </button>
+              </div>
+              <div class="control-card glass-inner routine-card">
+                <h4>Last Result</h4>
+                <div id="last-scan-summary" class="scan-summary">No scans run yet.</div>
+              </div>
+            </div>
+          </div>
+          </div>
+
+          <!-- SUMMARY STATS LIST -->
+          <div class="overview-box glass sidebar-box">
+            <h3>📋 Mod Actions Summary</h3>
+            <ul class="mod-stats-list">
+              <li>
+                <span class="item-label"><i class="fa-solid fa-ban red-text"></i> Total Banned Users</span>
+                <span class="item-badge red-bg" id="stat-bans">0</span>
+              </li>
+              <li>
+                <span class="item-label"><i class="fa-solid fa-volume-xmark yellow-text"></i> Total Muted Users</span>
+                <span class="item-badge yellow-bg" id="stat-mutes">0</span>
+              </li>
+              <li>
+                <span class="item-label"><i class="fa-solid fa-message-slash purple-text"></i> Profanity Removed</span>
+                <span class="item-badge purple-bg" id="stat-profanity">0</span>
+              </li>
+            </ul>
+            <div class="setup-checklist-box">
+              <h4>Setup Checklist</h4>
+              <ul class="checklist">
+                <li class="checked"><i class="fa-solid fa-check-circle"></i> Create Bot & Dashboard</li>
+                <li id="chk-token"><i class="fa-solid fa-circle-notch fa-spin"></i> Configure Bot Token</li>
+                <li id="chk-group"><i class="fa-solid fa-circle-question"></i> Add Bot to Group</li>
+                <li id="chk-admin"><i class="fa-solid fa-circle-question"></i> Promote Bot to Admin</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MODERATION RULES PANEL -->
+      <div id="tab-rules" class="tab-panel">
+        <form id="rules-form">
+          <!-- Security Preset Selector -->
+          <div class="preset-selector-container glass-inner">
+            <span class="preset-label"><i class="fa-solid fa-wand-magic-sparkles"></i> Simple Security Presets:</span>
+            <div class="preset-buttons">
+              <button type="button" class="preset-btn" id="preset-casual">
+                <span class="preset-icon green-text"><i class="fa-solid fa-shield-halved"></i></span>
+                <div class="preset-text">
+                  <strong>Casual Guard</strong>
+                  <span>Light filtering, active welcomes & normal chat</span>
+                </div>
+              </button>
+              <button type="button" class="preset-btn" id="preset-standard">
+                <span class="preset-icon blue-text"><i class="fa-solid fa-user-shield"></i></span>
+                <div class="preset-text">
+                  <strong>Balanced Guard</strong>
+                  <span>Default filters. Protected spam & ads</span>
+                </div>
+              </button>
+              <button type="button" class="preset-btn" id="preset-strict">
+                <span class="preset-icon red-text"><i class="fa-solid fa-lock"></i></span>
+                <div class="preset-text">
+                  <strong>Strict Guard</strong>
+                  <span>High guard. Maximum limits & file lockdown</span>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <!-- Rules Categories Navigation Bar -->
+          <div class="rules-categories-tabs glass-inner">
+            <button type="button" class="category-btn active" data-category="welcome">👋 Welcome & Joins</button>
+            <button type="button" class="category-btn" data-category="chat">💬 Chat Filters</button>
+            <button type="button" class="category-btn" data-category="links">🔗 Links & Mentions</button>
+            <button type="button" class="category-btn" data-category="media">🖼️ Media & Emojis</button>
+            <button type="button" class="category-btn" data-category="security">🛡️ Group Security</button>
+          </div>
+
+          <!-- silent mode card -->
+          <div class="rules-card glass" data-rule-category="welcome">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-volume-xmark"></i> Silent Mode (bot never speaks to members)</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-silent-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-silent">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-silent-welcome">
+                    <span class="checkmark"></span>
+                    Suppress welcome messages
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-silent-announcements">
+                    <span class="checkmark"></span>
+                    Suppress raid/CAS/NSFW-name announcements
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-silent-action-notices">
+                    <span class="checkmark"></span>
+                    Suppress admin action confirmations
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-silent-captcha">
+                    <span class="checkmark"></span>
+                    Suppress captcha (joiners stay muted — admin must /unmute)
+                  </label>
+                </div>
+              </div>
+              <span class="input-hint">When enabled, the bot will silently delete/restrict — no warnings, no welcomes, no group-visible replies. Admin info commands (/stats /id /ping /rules /help /report) still work.</span>
+            </div>
+          </div>
+
+          <!-- welcome card -->
+          <div class="rules-card glass" data-rule-category="welcome">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-door-open"></i> Welcome Message</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-welcome-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            
+            <div class="rules-card-body" id="body-welcome">
+              <div class="input-group">
+                <label for="rule-welcome-text">Greeting Template</label>
+                <textarea id="rule-welcome-text" rows="3" placeholder="Welcome to the group!"></textarea>
+                <span class="input-hint">Available placeholders: <code>{username}</code>, <code>{firstname}</code>, <code>{groupname}</code></span>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group">
+                  <label for="rule-welcome-delete">Auto Delete Timer (seconds)</label>
+                  <input type="number" id="rule-welcome-delete" min="0" max="600" placeholder="30">
+                  <span class="input-hint">Set to 0 to keep messages permanently.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- anti spam card -->
+          <div class="rules-card glass" data-rule-category="chat">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-bolt"></i> Anti-Spam (Rate Limiting)</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-spam-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            
+            <div class="rules-card-body" id="body-spam">
+              <div class="input-group-row">
+                <div class="input-group">
+                  <label for="rule-spam-max">Max Messages</label>
+                  <input type="number" id="rule-spam-max" min="1" max="50">
+                </div>
+                <div class="input-group">
+                  <label for="rule-spam-interval">Time Window (milliseconds)</label>
+                  <input type="number" id="rule-spam-interval" min="500" max="60000" step="500">
+                </div>
+                <div class="input-group">
+                  <label for="rule-spam-duplicate">Duplicate Limit (same message in window)</label>
+                  <input type="number" id="rule-spam-duplicate" min="1" max="20">
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-spam-action">Action when spam limit exceeded</label>
+                <select id="rule-spam-action">
+                  <option value="warn">Issue Warning (Ban at 3 warnings)</option>
+                  <option value="mute">Mute User for 30 Mins</option>
+                  <option value="kick">Kick User</option>
+                  <option value="ban">Ban User Permanently</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- anti link card -->
+          <div class="rules-card glass" data-rule-category="links">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-link"></i> Link Restriction</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-link-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            
+            <div class="rules-card-body" id="body-link">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-link-strict">
+                    <span class="checkmark"></span>
+                    Strict mode (catches bare domains + shorteners)
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-link-enforce-admins">
+                    <span class="checkmark"></span>
+                    Enforce on admins too
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-link-admin">
+                    <span class="checkmark"></span>
+                    Legacy: allow links from admins
+                  </label>
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-link-whitelist">Whitelisted domains (one per line / comma-separated)</label>
+                <textarea id="rule-link-whitelist" rows="3" placeholder="example.com
+docs.python.org"></textarea>
+                <span class="input-hint">Only applies in non-strict mode. Matches host suffix (so <code>example.com</code> covers <code>sub.example.com</code>).</span>
+              </div>
+              <div class="input-group">
+                <label for="rule-link-action">Action when links are shared</label>
+                <select id="rule-link-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- profanity card -->
+          <div class="rules-card glass" data-rule-category="chat">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-message-slash"></i> Profanity & Scam Filter</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-profanity-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            
+            <div class="rules-card-body" id="body-profanity">
+              <div class="input-group">
+                <label for="rule-profanity-blacklist">Blacklisted Keywords (Comma separated)</label>
+                <textarea id="rule-profanity-blacklist" rows="3" placeholder="word1, word2, word3..."></textarea>
+                <span class="input-hint">Any message containing these keywords (case insensitive) will be deleted.</span>
+              </div>
+              <div class="input-group checkbox-group">
+                <label class="checkbox-container">
+                  <input type="checkbox" id="rule-profanity-enforce-admins">
+                  <span class="checkmark"></span>
+                  Enforce on admins too
+                </label>
+              </div>
+              <div class="input-group">
+                <label for="rule-profanity-action">Filter Action</label>
+                <select id="rule-profanity-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- anti forward card -->
+          <div class="rules-card glass" data-rule-category="links">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-share-from-square"></i> Anti-Forward</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-forward-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-forward">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-forward-channels">
+                    <span class="checkmark"></span>
+                    Block forwards from channels
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-forward-users">
+                    <span class="checkmark"></span>
+                    Block forwards from users/groups
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-forward-hidden">
+                    <span class="checkmark"></span>
+                    Block hidden-source forwards
+                  </label>
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-forward-action">Action on forwarded messages</label>
+                <select id="rule-forward-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- anti mention card -->
+          <div class="rules-card glass" data-rule-category="links">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-at"></i> Anti-Mention (Other Groups/Channels)</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-mention-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-mention">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-mention-channels">
+                    <span class="checkmark"></span>
+                    Block @handles / t.me/ links
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-mention-users">
+                    <span class="checkmark"></span>
+                    Also block tagging members
+                  </label>
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-mention-whitelist">Whitelisted handles (comma separated, include @)</label>
+                <textarea id="rule-mention-whitelist" rows="2" placeholder="@myofficialchannel, @supportbot"></textarea>
+              </div>
+              <div class="input-group">
+                <label for="rule-mention-action">Action</label>
+                <select id="rule-mention-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- anti media card -->
+          <div class="rules-card glass" data-rule-category="media">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-image"></i> Anti-NSFW Media (Photos / Stickers / Files)</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-media-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-media">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-captions">
+                    <span class="checkmark"></span>
+                    Scan media captions for NSFW
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-filenames">
+                    <span class="checkmark"></span>
+                    Scan file/document names
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-sticker-emoji">
+                    <span class="checkmark"></span>
+                    Scan sticker emoji/pack name
+                  </label>
+                </div>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-block-stickers">
+                    <span class="checkmark"></span>
+                    Block ALL stickers
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-block-gifs">
+                    <span class="checkmark"></span>
+                    Block ALL GIFs/animations
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-block-videonotes">
+                    <span class="checkmark"></span>
+                    Block round video messages
+                  </label>
+                </div>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-block-photos">
+                    <span class="checkmark"></span>
+                    Block ALL photos (thumbnails)
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-block-videos">
+                    <span class="checkmark"></span>
+                    Block ALL videos
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-block-documents">
+                    <span class="checkmark"></span>
+                    Block ALL documents/files
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-block-voice">
+                    <span class="checkmark"></span>
+                    Block voice notes
+                  </label>
+                </div>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-media-require-caption">
+                    <span class="checkmark"></span>
+                    Require captions on photos (block bare thumbnails)
+                  </label>
+                </div>
+                <div class="input-group">
+                  <label for="rule-media-min-caption">Min photo caption length</label>
+                  <input type="number" id="rule-media-min-caption" min="0" max="500" placeholder="0">
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-media-action">Action</label>
+                <select id="rule-media-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+                <span class="input-hint">NSFW keyword list is the same as the Profanity Filter blacklist.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- anti premium emoji card -->
+          <div class="rules-card glass" data-rule-category="media">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-crown"></i> Anti-Premium-Emoji & Stickers</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-premium-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-premium">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-premium-all">
+                    <span class="checkmark"></span>
+                    Block ALL premium custom emojis
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-premium-video">
+                    <span class="checkmark"></span>
+                    Block video stickers (WebM)
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-premium-animated">
+                    <span class="checkmark"></span>
+                    Block animated stickers (TGS)
+                  </label>
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-premium-emoji-blocklist">Custom emoji ID blocklist (one per line / comma-separated)</label>
+                <textarea id="rule-premium-emoji-blocklist" rows="3" placeholder="5123456789012345678
+5234567890123456789"></textarea>
+                <span class="input-hint">Admins can also use <code>/blockemoji</code> (reply to message) in the group.</span>
+              </div>
+              <div class="input-group">
+                <label for="rule-premium-set-blocklist">Sticker pack name blocklist (one per line / comma-separated)</label>
+                <textarea id="rule-premium-set-blocklist" rows="3" placeholder="DesiNudesPack
+SexyStickers"></textarea>
+                <span class="input-hint">Use <code>/blockstickerset</code> (reply to a sticker) to add live.</span>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-premium-enforce-admins">
+                    <span class="checkmark"></span>
+                    Enforce on admins too
+                  </label>
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-premium-action">Action</label>
+                <select id="rule-premium-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- anti adult emoji card -->
+          <div class="rules-card glass" data-rule-category="media">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-face-flushed"></i> Anti-Adult-Emoji</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-adultemoji-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-adultemoji">
+              <div class="input-group-row">
+                <div class="input-group">
+                  <label for="rule-adultemoji-threshold">Combo threshold (suggestive emojis)</label>
+                  <input type="number" id="rule-adultemoji-threshold" min="1" max="20" step="1">
+                </div>
+                <div class="input-group">
+                  <label for="rule-adultemoji-density">Density (adult-emoji share, 0–1)</label>
+                  <input type="number" id="rule-adultemoji-density" min="0" max="1" step="0.05">
+                </div>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-adultemoji-sticker">
+                    <span class="checkmark"></span>
+                    Block adult-emoji stickers
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-adultemoji-captions">
+                    <span class="checkmark"></span>
+                    Scan media captions too
+                  </label>
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-adultemoji-action">Action</label>
+                <select id="rule-adultemoji-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+                <span class="input-hint">Catches 🔞 alone, 2+ combos like 🍆💦 / 🥵🤤🍑, and emoji-only spam.</span>
+              </div>
+              <div class="input-group checkbox-group">
+                <label class="checkbox-container">
+                  <input type="checkbox" id="rule-adultemoji-enforce-admins">
+                  <span class="checkmark"></span>
+                  Enforce on admins too
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- anti button card -->
+          <div class="rules-card glass" data-rule-category="links">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-square-poll-horizontal"></i> Anti-Button (Inline Keyboards / CTA Promos)</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-button-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-button">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-button-inline">
+                    <span class="checkmark"></span>
+                    Block inline keyboard buttons
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-button-viabot">
+                    <span class="checkmark"></span>
+                    Block messages sent via @inlinebot
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-button-text">
+                    <span class="checkmark"></span>
+                    Block button-style / CTA text
+                  </label>
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-button-action">Action</label>
+                <select id="rule-button-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- anti preview card -->
+          <div class="rules-card glass" data-rule-category="links">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-images"></i> Anti-Preview / Thumbnail</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-preview-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-preview">
+              <div class="input-group checkbox-group">
+                <label class="checkbox-container">
+                  <input type="checkbox" id="rule-preview-web">
+                  <span class="checkmark"></span>
+                  Delete messages that show link previews / web-page thumbnails
+                </label>
+              </div>
+              <div class="input-group">
+                <label for="rule-preview-action">Action</label>
+                <select id="rule-preview-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+              </div>
+              <div class="input-group checkbox-group">
+                <label class="checkbox-container">
+                  <input type="checkbox" id="rule-preview-enforce-admins">
+                  <span class="checkmark"></span>
+                  Enforce on admins too
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- anti raid card -->
+          <div class="rules-card glass" data-rule-category="security">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-shield-heart"></i> Anti-Raid Mode</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-raid-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            
+            <div class="rules-card-body" id="body-raid">
+              <div class="input-group-row">
+                <div class="input-group">
+                  <label for="rule-raid-limit">Join Threshold (joins count)</label>
+                  <input type="number" id="rule-raid-limit" min="1" max="100">
+                </div>
+                <div class="input-group">
+                  <label for="rule-raid-interval">Time Window (seconds)</label>
+                  <input type="number" id="rule-raid-interval" min="2" max="60">
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-raid-action">Action upon raid detection</label>
+                <select id="rule-raid-action">
+                  <option value="restrict">Restrict joining members (Set Read-Only)</option>
+                </select>
+                <span class="input-hint">Raid status remains active until deactivated via the live terminal using <code>/unraid</code> or dashboard toggle.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- routine scan card -->
+          <div class="rules-card glass">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-broom"></i> Routine Scan</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-scan-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-scan">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-scan-boot">
+                    <span class="checkmark"></span>
+                    Auto-scan on bot start
+                  </label>
+                </div>
+                <div class="input-group">
+                  <label for="rule-scan-default">Default window (hours)</label>
+                  <input type="number" id="rule-scan-default" min="1" max="720">
+                </div>
+                <div class="input-group">
+                  <label for="rule-scan-max">Max window (hours)</label>
+                  <input type="number" id="rule-scan-max" min="1" max="8760">
+                </div>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group">
+                  <label for="rule-scan-cache-size">Message cache size</label>
+                  <input type="number" id="rule-scan-cache-size" min="100" max="200000" step="100">
+                </div>
+                <div class="input-group">
+                  <label for="rule-scan-cache-ttl">Cache TTL (days)</label>
+                  <input type="number" id="rule-scan-cache-ttl" min="1" max="365">
+                </div>
+                <div class="input-group">
+                  <label for="rule-scan-delay">Delete delay (ms, throttling)</label>
+                  <input type="number" id="rule-scan-delay" min="0" max="5000" step="5">
+                </div>
+                <div class="input-group">
+                  <label for="rule-scan-auto">Auto-scan every N hours (0 = off)</label>
+                  <input type="number" id="rule-scan-auto" min="0" max="720">
+                </div>
+              </div>
+              <span class="input-hint">Telegram doesn't let bots read group history, so scans only cover messages received <em>since the bot was added</em>. The cache persists across restarts.</span>
+            </div>
+          </div>
+
+          <!-- new user restrictions card -->
+          <div class="rules-card glass">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-user-clock"></i> New-User Restrictions</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-newuser-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-newuser">
+              <div class="input-group-row">
+                <div class="input-group">
+                  <label for="rule-newuser-count">Restricted for first N messages</label>
+                  <input type="number" id="rule-newuser-count" min="1" max="50">
+                </div>
+                <div class="input-group">
+                  <label for="rule-newuser-duration">…or for N minutes after joining</label>
+                  <input type="number" id="rule-newuser-duration" min="1" max="10080">
+                </div>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-newuser-links">
+                    <span class="checkmark"></span>
+                    Block links from new members
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-newuser-media">
+                    <span class="checkmark"></span>
+                    Block media from new members
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-newuser-forwards">
+                    <span class="checkmark"></span>
+                    Block forwards from new members
+                  </label>
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-newuser-action">Action</label>
+                <select id="rule-newuser-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+                <span class="input-hint">Kills the "join → instantly spam" pattern. Applies only to joins the bot witnessed.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- content types card -->
+          <div class="rules-card glass">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-box-open"></i> Content-Type Filters (Paid Media / Polls / More)</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-content-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-content">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-content-paid">
+                    <span class="checkmark"></span>
+                    Block paid media (Telegram Stars — porn-sale vector)
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-content-spoiler">
+                    <span class="checkmark"></span>
+                    Block spoiler-hidden photos/videos
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-content-scanpolls">
+                    <span class="checkmark"></span>
+                    Scan polls for NSFW / links
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-content-blockpolls">
+                    <span class="checkmark"></span>
+                    Block ALL polls
+                  </label>
+                </div>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-content-games">
+                    <span class="checkmark"></span>
+                    Block game messages
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-content-contacts">
+                    <span class="checkmark"></span>
+                    Block contact cards
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-content-locations">
+                    <span class="checkmark"></span>
+                    Block locations/venues
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-content-repeated">
+                    <span class="checkmark"></span>
+                    Block repeated-char spam (aaaa…)
+                  </label>
+                </div>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group">
+                  <label for="rule-content-maxlen">Max message length (0 = off)</label>
+                  <input type="number" id="rule-content-maxlen" min="0" max="4096">
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-content-enforce-admins">
+                    <span class="checkmark"></span>
+                    Enforce on admins too
+                  </label>
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-content-action">Action</label>
+                <select id="rule-content-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- captcha card -->
+          <div class="rules-card glass" data-rule-category="welcome">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-puzzle-piece"></i> Join Captcha</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-captcha-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-captcha">
+              <div class="input-group-row">
+                <div class="input-group">
+                  <label for="rule-captcha-timeout">Timeout (seconds)</label>
+                  <input type="number" id="rule-captcha-timeout" min="15" max="600">
+                </div>
+                <div class="input-group">
+                  <label for="rule-captcha-attempts">Max wrong attempts</label>
+                  <input type="number" id="rule-captcha-attempts" min="1" max="10">
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-captcha-kick">
+                    <span class="checkmark"></span>
+                    Kick on fail/timeout
+                  </label>
+                </div>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-captcha-dm">
+                    <span class="checkmark"></span>
+                    Try DM first (only the new user sees the captcha)
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-captcha-silent">
+                    <span class="checkmark"></span>
+                    Silent in-group fallback (no ping)
+                  </label>
+                </div>
+              </div>
+              <span class="input-hint">When DM works, only the joiner sees the captcha. If they haven't started a chat with the bot, the bot falls back to a quiet in-group message that auto-deletes once solved.</span>
+            </div>
+          </div>
+
+          <!-- CAS card -->
+          <div class="rules-card glass" data-rule-category="welcome">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-globe"></i> CAS (Combot Anti-Spam) Lookup</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-cas-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-cas">
+              <div class="input-group">
+                <label for="rule-cas-action">Action on CAS hit</label>
+                <select id="rule-cas-action">
+                  <option value="ban">Ban</option>
+                  <option value="kick">Kick</option>
+                  <option value="restrict">Restrict (mute)</option>
+                </select>
+                <span class="input-hint">Every new joiner is checked against <a href="https://cas.chat" target="_blank">cas.chat</a>'s global ban list.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Name Filter card -->
+          <div class="rules-card glass" data-rule-category="welcome">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-id-card"></i> Name Filter (NSFW usernames)</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-namefilter-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-namefilter">
+              <div class="input-group">
+                <label for="rule-namefilter-action">Action on NSFW name match</label>
+                <select id="rule-namefilter-action">
+                  <option value="ban">Ban</option>
+                  <option value="kick">Kick</option>
+                </select>
+                <span class="input-hint">Scans username + first/last name against the profanity blacklist at join time.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Anti Sender-Chat card -->
+          <div class="rules-card glass" data-rule-category="security">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-mask"></i> Anti-Sender-Chat (posting as a channel)</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-senderchat-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-senderchat">
+              <div class="input-group">
+                <label for="rule-senderchat-action">Action</label>
+                <select id="rule-senderchat-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+                <span class="input-hint">Stops users from posting anonymously as a channel they own.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Anti Zalgo card -->
+          <div class="rules-card glass" data-rule-category="chat">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-text-slash"></i> Anti-Zalgo / RTL Override</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-zalgo-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-zalgo">
+              <div class="input-group-row">
+                <div class="input-group">
+                  <label for="rule-zalgo-max">Max combining chars per message</label>
+                  <input type="number" id="rule-zalgo-max" min="0" max="500">
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-zalgo-rtl">
+                    <span class="checkmark"></span>
+                    Block RTL/bidi override characters (U+202E, etc.)
+                  </label>
+                </div>
+              </div>
+              <div class="input-group">
+                <label for="rule-zalgo-action">Action</label>
+                <select id="rule-zalgo-action">
+                  <option value="delete">Delete Message only</option>
+                  <option value="delete_and_warn">Delete Message & Warn User</option>
+                  <option value="ban">Ban User instantly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Anti-Forward enforce on admins -->
+          <!-- Anti-Mention enforce on admins -->
+          <!-- (extending existing cards via JS) -->
+
+          <div class="form-actions-sticky glass">
+            <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Save All Rules</button>
+            <button type="button" class="btn btn-outline" id="rules-reset-btn">Reset Modifications</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- LIVE TERMINAL PANEL -->
+      <div id="tab-terminal" class="tab-panel">
+        <div class="terminal-card glass">
+          <div class="terminal-header">
+            <div class="window-dots">
+              <span class="dot dot-red"></span>
+              <span class="dot dot-yellow"></span>
+              <span class="dot dot-green"></span>
+            </div>
+            <span class="terminal-title"><i class="fa-solid fa-terminal"></i> octogod-bot.log</span>
+            <div class="terminal-filters">
+              <select id="log-filter-level">
+                <option value="ALL">All Levels</option>
+              </select>
+              <button class="btn btn-secondary btn-small" id="clear-console-btn"><i class="fa-solid fa-eraser"></i> Clear Screen</button>
+            </div>
+          </div>
+          <div class="terminal-body" id="terminal-body-console">
+            <!-- Log entries will be written here dynamically -->
+          </div>
+        </div>
+      </div>
+
+      <!-- USER MODERATION DATABASE PANEL -->
+      <div id="tab-moderation" class="tab-panel">
+        <div class="panel-box glass">
+          <div class="panel-box-header">
+            <h3>⚠️ User Warnings Database</h3>
+            <p>List of users who currently have active warnings on their profile.</p>
+          </div>
+          <div class="table-container">
+            <table class="data-table" id="table-warnings">
+              <thead>
+                <tr>
+                  <th>User ID</th>
+                  <th>Username</th>
+                  <th>Warnings Count</th>
+                  <th>Last Offense Reason</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="warnings-tbody">
+                <tr>
+                  <td colspan="5" class="center-text text-muted">No warnings issued yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel-box glass margin-top-20">
+          <div class="panel-box-header">
+            <h3>🔨 Banned Users Logs</h3>
+            <p>Historical logs of members banned from this group.</p>
+          </div>
+          <div class="table-container">
+            <table class="data-table" id="table-bans">
+              <thead>
+                <tr>
+                  <th>User ID</th>
+                  <th>Username</th>
+                  <th>Banned At</th>
+                  <th>Reason</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="bans-tbody">
+                <tr>
+                  <td colspan="6" class="center-text text-muted">No bans recorded.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel-box glass margin-top-20">
+          <div class="panel-box-header">
+            <h3>📜 Moderation Events History</h3>
+            <p>Auditable ledger of recent actions taken by OctoGod.</p>
+          </div>
+          <div class="table-container">
+            <table class="data-table" id="table-history">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Event</th>
+                  <th>User</th>
+                  <th>Reason/Message</th>
+                </tr>
+              </thead>
+              <tbody id="history-tbody">
+                <tr>
+                  <td colspan="4" class="center-text text-muted">No recent events recorded.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SYSTEM SETTINGS PANEL -->
+      <div id="tab-settings" class="tab-panel">
+        <div class="panel-box glass">
+          <h3>🤖 Connected Bots</h3>
+          <p class="input-hint" style="margin-bottom:12px">Run any number of bots side-by-side. They share the same moderation rules, blacklists, and user database.</p>
+          <div class="table-container">
+            <table class="data-table" id="table-bots">
+              <thead>
+                <tr><th>ID</th><th>Username</th><th>Name</th><th>Status</th><th>Added</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="bots-tbody">
+                <tr><td colspan="6" class="center-text text-muted">No bots configured yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <form id="add-bot-form" class="settings-form-layout" style="margin-top:18px">
+            <div class="input-group-row">
+              <div class="input-group">
+                <label for="new-bot-token"><i class="fa-solid fa-key"></i> Bot Token</label>
+                <input type="password" id="new-bot-token" required placeholder="1234567890:AAFxxxx...">
+              </div>
+              <div class="input-group">
+                <label for="new-bot-name"><i class="fa-solid fa-tag"></i> Display name (optional)</label>
+                <input type="text" id="new-bot-name" maxlength="64" placeholder="Main mod bot">
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Add Bot</button>
+          </form>
+
+          <div class="danger-zone-box glass-inner" style="margin-top:18px">
+            <h4>⚠️ Service Controls (apply to all bots)</h4>
+            <div class="danger-btn-row">
+              <button class="btn btn-primary" id="btn-restart-bot"><i class="fa-solid fa-arrow-rotate-right"></i> Restart All</button>
+              <button class="btn btn-danger" id="btn-stop-bot"><i class="fa-solid fa-circle-stop"></i> Stop All</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-box glass margin-top-20">
+          <h3>🔐 Change Admin Password</h3>
+          <form id="change-password-form" class="settings-form-layout">
+            <div class="input-group">
+              <label for="cp-current"><i class="fa-solid fa-lock"></i> Current Password</label>
+              <input type="password" id="cp-current" required autocomplete="current-password">
+            </div>
+            <div class="input-group">
+              <label for="cp-new"><i class="fa-solid fa-key"></i> New Password (min 8 chars)</label>
+              <input type="password" id="cp-new" required minlength="8" autocomplete="new-password">
+            </div>
+            <div class="input-group">
+              <label for="cp-new-confirm"><i class="fa-solid fa-key"></i> Confirm New Password</label>
+              <input type="password" id="cp-new-confirm" required minlength="8" autocomplete="new-password">
+            </div>
+            <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Rotate Password</button>
+          </form>
+        </div>
+
+        <div class="panel-box glass margin-top-20">
+          <h3>📖 How to Set Up the Bot</h3>
+          <ol class="setup-steps">
+            <li>Open Telegram and search for <a href="https://t.me/BotFather" target="_blank">@BotFather</a>.</li>
+            <li>Send the command <code>/newbot</code> and follow the instructions to get a token.</li>
+            <li>Save the token using this dashboard (Setup Wizard or System Settings).</li>
+            <li>Create your Telegram Group (or open your existing group).</li>
+            <li>Add the bot user as a member of your group.</li>
+            <li>Open the Group Info, go to **Administrators**, add the bot, and allow **Delete Messages** and **Ban Users**.</li>
+            <li>Your group is now protected! The dashboard will start plotting stats dynamically.</li>
+          </ol>
+        </div>
+      </div>
+
+    </main>
+
+  </div>
+
+  <!-- TOAST NOTIFICATIONS -->
+  <div id="toast-container"></div>
+
+  <!-- Client JavaScripts -->
+  <!-- Socket.io -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Dashboard Control Logic -->
+  <script src="app.js"></script>
+</body>
+</html>

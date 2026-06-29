@@ -1,0 +1,1940 @@
+// OctoGod Web Dashboard Client Logic
+
+document.addEventListener('DOMContentLoaded', () => {
+  let socket = null;
+  let currentSettings = null;
+  const allLogs = [];
+
+  // UI Element Selectors
+  const appContainer = document.getElementById('app-container');
+  const setupWizard = document.getElementById('setup-wizard');
+  const tokenForm = document.getElementById('token-form');
+  const botTokenInput = document.getElementById('bot-token');
+
+  // Auth Selectors
+  const createAdminModal = document.getElementById('create-admin-modal');
+  const createAdminForm = document.getElementById('create-admin-form');
+  const caUsername = document.getElementById('ca-username');
+  const caPassword = document.getElementById('ca-password');
+  const caPasswordConfirm = document.getElementById('ca-password-confirm');
+
+  const loginModal = document.getElementById('login-modal');
+  const loginForm = document.getElementById('login-form');
+  const loginUsername = document.getElementById('login-username');
+  const loginPassword = document.getElementById('login-password');
+  const logoutBtn = document.getElementById('logout-btn');
+
+  const changePasswordForm = document.getElementById('change-password-form');
+  const cpCurrent = document.getElementById('cp-current');
+  const cpNew = document.getElementById('cp-new');
+  const cpNewConfirm = document.getElementById('cp-new-confirm');
+
+  // Wrap fetch so credentials (session cookie) are always sent and 401s redirect to login.
+  async function api(input, init = {}) {
+    const opts = { credentials: 'same-origin', ...init };
+    if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)) {
+      opts.headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      opts.body = JSON.stringify(opts.body);
+    }
+    const res = await fetch(input, opts);
+    if (res.status === 401) {
+      showAuthScreen('login');
+      throw new Error('unauthorized');
+    }
+    return res;
+  }
+  
+  const statusDot = document.getElementById('status-dot');
+  const statusText = document.getElementById('status-text');
+  const quickActionStatusBtn = document.getElementById('quick-action-status');
+  const quickActionText = document.getElementById('quick-action-text');
+
+  // Stats Selectors
+  const statMessages = document.getElementById('stat-messages');
+  const statSpam = document.getElementById('stat-spam');
+  const statLinks = document.getElementById('stat-links');
+  const statWarns = document.getElementById('stat-warns');
+  const statBans = document.getElementById('stat-bans');
+  const statMutes = document.getElementById('stat-mutes');
+  const statProfanity = document.getElementById('stat-profanity');
+
+  // Checklist Selectors
+  const chkToken = document.getElementById('chk-token');
+
+  // Quick Switch Toggles
+  const quickWelcomeToggle = document.getElementById('quick-welcome-toggle');
+  const quickSpamToggle = document.getElementById('quick-spam-toggle');
+  const quickLinkToggle = document.getElementById('quick-link-toggle');
+  const quickRaidToggle = document.getElementById('quick-raid-toggle');
+
+  const quickWelcomeLabel = document.getElementById('quick-welcome-label');
+  const quickSpamLabel = document.getElementById('quick-spam-label');
+  const quickLinkLabel = document.getElementById('quick-link-label');
+  const quickRaidLabel = document.getElementById('quick-raid-label');
+
+  // Rules Form Selectors
+  const rulesForm = document.getElementById('rules-form');
+  // Silent Mode
+  const ruleSilentEnabled = document.getElementById('rule-silent-enabled');
+  const ruleSilentWelcome = document.getElementById('rule-silent-welcome');
+  const ruleSilentAnnouncements = document.getElementById('rule-silent-announcements');
+  const ruleSilentActionNotices = document.getElementById('rule-silent-action-notices');
+  const ruleSilentCaptcha = document.getElementById('rule-silent-captcha');
+
+  // New-user restrictions
+  const ruleNewUserEnabled = document.getElementById('rule-newuser-enabled');
+  const ruleNewUserCount = document.getElementById('rule-newuser-count');
+  const ruleNewUserDuration = document.getElementById('rule-newuser-duration');
+  const ruleNewUserLinks = document.getElementById('rule-newuser-links');
+  const ruleNewUserMedia = document.getElementById('rule-newuser-media');
+  const ruleNewUserForwards = document.getElementById('rule-newuser-forwards');
+  const ruleNewUserAction = document.getElementById('rule-newuser-action');
+
+  // Content-type filters
+  const ruleContentEnabled = document.getElementById('rule-content-enabled');
+  const ruleContentPaid = document.getElementById('rule-content-paid');
+  const ruleContentSpoiler = document.getElementById('rule-content-spoiler');
+  const ruleContentScanPolls = document.getElementById('rule-content-scanpolls');
+  const ruleContentBlockPolls = document.getElementById('rule-content-blockpolls');
+  const ruleContentGames = document.getElementById('rule-content-games');
+  const ruleContentContacts = document.getElementById('rule-content-contacts');
+  const ruleContentLocations = document.getElementById('rule-content-locations');
+  const ruleContentRepeated = document.getElementById('rule-content-repeated');
+  const ruleContentMaxLen = document.getElementById('rule-content-maxlen');
+  const ruleContentEnforceAdmins = document.getElementById('rule-content-enforce-admins');
+  const ruleContentAction = document.getElementById('rule-content-action');
+
+  // Routine scan settings
+  const ruleScanEnabled = document.getElementById('rule-scan-enabled');
+  const ruleScanAuto = document.getElementById('rule-scan-auto');
+  const ruleScanBoot = document.getElementById('rule-scan-boot');
+  const ruleScanDefault = document.getElementById('rule-scan-default');
+  const ruleScanMax = document.getElementById('rule-scan-max');
+  const ruleScanCacheSize = document.getElementById('rule-scan-cache-size');
+  const ruleScanCacheTtl = document.getElementById('rule-scan-cache-ttl');
+  const ruleScanDelay = document.getElementById('rule-scan-delay');
+
+  // Routine scan overview controls
+  const scanDurationSelect = document.getElementById('scan-duration-select');
+  const scanDurationCustom = document.getElementById('scan-duration-custom');
+  const btnRoutineScan = document.getElementById('btn-routine-scan');
+  const btnRoutineScanLabel = document.getElementById('btn-routine-scan-label');
+  const lastScanSummary = document.getElementById('last-scan-summary');
+
+  // Captcha
+  const ruleCaptchaEnabled = document.getElementById('rule-captcha-enabled');
+  const ruleCaptchaTimeout = document.getElementById('rule-captcha-timeout');
+  const ruleCaptchaAttempts = document.getElementById('rule-captcha-attempts');
+  const ruleCaptchaKick = document.getElementById('rule-captcha-kick');
+  const ruleCaptchaDm = document.getElementById('rule-captcha-dm');
+  const ruleCaptchaSilent = document.getElementById('rule-captcha-silent');
+
+  // CAS
+  const ruleCasEnabled = document.getElementById('rule-cas-enabled');
+  const ruleCasAction = document.getElementById('rule-cas-action');
+
+  // Name Filter
+  const ruleNameFilterEnabled = document.getElementById('rule-namefilter-enabled');
+  const ruleNameFilterAction = document.getElementById('rule-namefilter-action');
+
+  // Anti Sender-Chat
+  const ruleSenderChatEnabled = document.getElementById('rule-senderchat-enabled');
+  const ruleSenderChatAction = document.getElementById('rule-senderchat-action');
+
+  // Anti Zalgo
+  const ruleZalgoEnabled = document.getElementById('rule-zalgo-enabled');
+  const ruleZalgoMax = document.getElementById('rule-zalgo-max');
+  const ruleZalgoRtl = document.getElementById('rule-zalgo-rtl');
+  const ruleZalgoAction = document.getElementById('rule-zalgo-action');
+
+  // Anti-spam duplicate
+  const ruleSpamDuplicate = document.getElementById('rule-spam-duplicate');
+
+  // Anti-link whitelist
+  const ruleLinkWhitelist = document.getElementById('rule-link-whitelist');
+
+  // enforceOnAdmins toggles
+  const ruleProfanityEnforceAdmins = document.getElementById('rule-profanity-enforce-admins');
+  const ruleAdultEmojiEnforceAdmins = document.getElementById('rule-adultemoji-enforce-admins');
+  const rulePreviewEnforceAdmins = document.getElementById('rule-preview-enforce-admins');
+
+  const ruleWelcomeEnabled = document.getElementById('rule-welcome-enabled');
+  const ruleWelcomeText = document.getElementById('rule-welcome-text');
+  const ruleWelcomeDelete = document.getElementById('rule-welcome-delete');
+  const ruleSpamEnabled = document.getElementById('rule-spam-enabled');
+  const ruleSpamMax = document.getElementById('rule-spam-max');
+  const ruleSpamInterval = document.getElementById('rule-spam-interval');
+  const ruleSpamAction = document.getElementById('rule-spam-action');
+  const ruleLinkEnabled = document.getElementById('rule-link-enabled');
+  const ruleLinkAdmin = document.getElementById('rule-link-admin');
+  const ruleLinkStrict = document.getElementById('rule-link-strict');
+  const ruleLinkEnforceAdmins = document.getElementById('rule-link-enforce-admins');
+  const ruleLinkAction = document.getElementById('rule-link-action');
+  const ruleProfanityEnabled = document.getElementById('rule-profanity-enabled');
+  const ruleProfanityBlacklist = document.getElementById('rule-profanity-blacklist');
+  const ruleProfanityAction = document.getElementById('rule-profanity-action');
+  const ruleRaidEnabled = document.getElementById('rule-raid-enabled');
+  const ruleRaidLimit = document.getElementById('rule-raid-limit');
+  const ruleRaidInterval = document.getElementById('rule-raid-interval');
+  const ruleRaidAction = document.getElementById('rule-raid-action');
+
+  // Anti-Forward
+  const ruleForwardEnabled = document.getElementById('rule-forward-enabled');
+  const ruleForwardChannels = document.getElementById('rule-forward-channels');
+  const ruleForwardUsers = document.getElementById('rule-forward-users');
+  const ruleForwardHidden = document.getElementById('rule-forward-hidden');
+  const ruleForwardAction = document.getElementById('rule-forward-action');
+
+  // Anti-Mention
+  const ruleMentionEnabled = document.getElementById('rule-mention-enabled');
+  const ruleMentionChannels = document.getElementById('rule-mention-channels');
+  const ruleMentionUsers = document.getElementById('rule-mention-users');
+  const ruleMentionWhitelist = document.getElementById('rule-mention-whitelist');
+  const ruleMentionAction = document.getElementById('rule-mention-action');
+
+  // Anti-Media (NSFW)
+  const ruleMediaEnabled = document.getElementById('rule-media-enabled');
+  const ruleMediaCaptions = document.getElementById('rule-media-captions');
+  const ruleMediaFilenames = document.getElementById('rule-media-filenames');
+  const ruleMediaStickerEmoji = document.getElementById('rule-media-sticker-emoji');
+  const ruleMediaBlockStickers = document.getElementById('rule-media-block-stickers');
+  const ruleMediaBlockGifs = document.getElementById('rule-media-block-gifs');
+  const ruleMediaBlockVideoNotes = document.getElementById('rule-media-block-videonotes');
+  const ruleMediaBlockPhotos = document.getElementById('rule-media-block-photos');
+  const ruleMediaBlockVideos = document.getElementById('rule-media-block-videos');
+  const ruleMediaBlockDocuments = document.getElementById('rule-media-block-documents');
+  const ruleMediaBlockVoice = document.getElementById('rule-media-block-voice');
+  const ruleMediaRequireCaption = document.getElementById('rule-media-require-caption');
+  const ruleMediaMinCaption = document.getElementById('rule-media-min-caption');
+  const ruleMediaAction = document.getElementById('rule-media-action');
+
+  // Anti-Button
+  const ruleButtonEnabled = document.getElementById('rule-button-enabled');
+  const ruleButtonInline = document.getElementById('rule-button-inline');
+  const ruleButtonViaBot = document.getElementById('rule-button-viabot');
+  const ruleButtonText = document.getElementById('rule-button-text');
+  const ruleButtonAction = document.getElementById('rule-button-action');
+
+  // Anti-Preview
+  const rulePreviewEnabled = document.getElementById('rule-preview-enabled');
+  const rulePreviewWeb = document.getElementById('rule-preview-web');
+  const rulePreviewAction = document.getElementById('rule-preview-action');
+
+  // Anti-Premium Emoji & Sticker
+  const rulePremiumEnabled = document.getElementById('rule-premium-enabled');
+  const rulePremiumEnforceAdmins = document.getElementById('rule-premium-enforce-admins');
+  const rulePremiumAll = document.getElementById('rule-premium-all');
+  const rulePremiumVideo = document.getElementById('rule-premium-video');
+  const rulePremiumAnimated = document.getElementById('rule-premium-animated');
+  const rulePremiumEmojiBlocklist = document.getElementById('rule-premium-emoji-blocklist');
+  const rulePremiumSetBlocklist = document.getElementById('rule-premium-set-blocklist');
+  const rulePremiumAction = document.getElementById('rule-premium-action');
+
+  function parseList(str, re) {
+    return (str || '')
+      .split(/[\s,]+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0 && re.test(s));
+  }
+
+  // Anti-Adult-Emoji
+  const ruleAdultEmojiEnabled = document.getElementById('rule-adultemoji-enabled');
+  const ruleAdultEmojiThreshold = document.getElementById('rule-adultemoji-threshold');
+  const ruleAdultEmojiDensity = document.getElementById('rule-adultemoji-density');
+  const ruleAdultEmojiSticker = document.getElementById('rule-adultemoji-sticker');
+  const ruleAdultEmojiCaptions = document.getElementById('rule-adultemoji-captions');
+  const ruleAdultEmojiAction = document.getElementById('rule-adultemoji-action');
+
+  // Database Tbody Selectors
+  const warningsTbody = document.getElementById('warnings-tbody');
+  const bansTbody = document.getElementById('bans-tbody');
+  const historyTbody = document.getElementById('history-tbody');
+
+  // Terminal Selectors
+  const terminalConsole = document.getElementById('terminal-body-console');
+  const logFilterLevel = document.getElementById('log-filter-level');
+  const clearConsoleBtn = document.getElementById('clear-console-btn');
+
+  // System Settings Selectors
+  const activeTokenInput = document.getElementById('settings-bot-token');   // legacy — may be null after multi-bot UI swap
+  const revealTokenBtn = document.getElementById('reveal-token-btn');       // legacy — may be null
+  const btnRestartBot = document.getElementById('btn-restart-bot');
+  const btnStopBot = document.getElementById('btn-stop-bot');
+  const btnChangeToken = document.getElementById('btn-change-token');       // legacy — may be null
+  const rulesResetBtn = document.getElementById('rules-reset-btn');
+
+  // Multi-bot manager selectors
+  const botsTbody = document.getElementById('bots-tbody');
+  const addBotForm = document.getElementById('add-bot-form');
+  const newBotTokenInput = document.getElementById('new-bot-token');
+  const newBotNameInput = document.getElementById('new-bot-name');
+
+  // Toast Functionality
+  function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    
+    let icon = 'fa-circle-info';
+    if (type === 'success') icon = 'fa-circle-check';
+    if (type === 'error') icon = 'fa-triangle-exclamation';
+
+    toast.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${message}</span>`;
+    container.appendChild(toast);
+
+    setTimeout(() => {
+      toast.style.animation = 'fadeIn 0.3s ease-out reverse';
+      setTimeout(() => toast.remove(), 300);
+    }, 4000);
+  }
+
+  function hideAllModals() {
+    createAdminModal.classList.add('hidden');
+    loginModal.classList.add('hidden');
+    setupWizard.classList.add('hidden');
+    appContainer.classList.add('hidden');
+  }
+
+  function showAuthScreen(which) {
+    hideAllModals();
+    if (which === 'create') createAdminModal.classList.remove('hidden');
+    else if (which === 'login') loginModal.classList.remove('hidden');
+    else if (which === 'setup') setupWizard.classList.remove('hidden');
+    else if (which === 'app') appContainer.classList.remove('hidden');
+  }
+
+  // Boot — auth first, then bot status
+  async function bootstrap() {
+    try {
+      const auth = await fetch('/api/auth-status', { credentials: 'same-origin' }).then(r => r.json());
+      if (!auth.adminExists) {
+        showAuthScreen('create');
+        return;
+      }
+      if (!auth.loggedIn) {
+        showAuthScreen('login');
+        return;
+      }
+      await checkBotStatus();
+    } catch (err) {
+      showToast('Cannot connect to backend server.', 'error');
+    }
+  }
+
+  // Check Status (assumes authenticated)
+  async function checkBotStatus() {
+    try {
+      const response = await api('/api/status');
+      const status = await response.json();
+
+      if (status.hasToken) {
+        showAuthScreen('app');
+        chkToken.className = 'checked';
+        chkToken.innerHTML = '<i class="fa-solid fa-check-circle"></i> Configure Bot Token';
+        initSocket();
+        loadAllSettings();
+        loadModData();
+        loadLastScan();
+        loadBots();
+      } else {
+        showAuthScreen('setup');
+        chkToken.className = '';
+        chkToken.innerHTML = '<i class="fa-solid fa-circle-notch"></i> Configure Bot Token';
+      }
+
+      updateBotStatusUI(status.online);
+    } catch (err) {
+      if (err.message !== 'unauthorized') showToast('Cannot connect to backend server.', 'error');
+    }
+  }
+
+  function updateBotStatusUI(online) {
+    if (online) {
+      statusDot.className = 'status-indicator-dot online';
+      statusText.textContent = 'Running (Online)';
+      quickActionStatusBtn.className = 'btn btn-outline';
+      quickActionText.textContent = 'Stop Bot';
+      quickActionStatusBtn.querySelector('i').className = 'fa-solid fa-circle-stop';
+    } else {
+      statusDot.className = 'status-indicator-dot offline';
+      statusText.textContent = 'Stopped (Offline)';
+      quickActionStatusBtn.className = 'btn btn-primary';
+      quickActionText.textContent = 'Start Bot';
+      quickActionStatusBtn.querySelector('i').className = 'fa-solid fa-circle-play';
+    }
+  }
+
+  // Socket Connections
+  function initSocket() {
+    if (socket) return;
+    
+    socket = io();
+
+    socket.on('connect', () => {
+      showToast('Real-time sync connected.', 'success');
+    });
+
+    socket.on('disconnect', () => {
+      statusDot.className = 'status-indicator-dot';
+      statusText.textContent = 'Disconnected';
+      showToast('Real-time sync lost.', 'error');
+    });
+
+    // Real-time log stream
+    socket.on('log', (logEntry) => {
+      appendLogLine(logEntry);
+      allLogs.push(logEntry);
+      if (allLogs.length > 1000) allLogs.shift();
+      updateHistoryTable();
+
+      // Broadcast toast notifications for moderation events
+      const level = logEntry.level;
+      const msg = logEntry.message;
+      const modLevels = new Set([
+        'BAN', 'KICK', 'MUTE', 'UNMUTE', 'WARNING',
+        'SPAM', 'FLOOD', 'LINK', 'FORWARD', 'MENTION', 'MEDIA', 'BUTTON', 'PREVIEW',
+        'PROFANITY', 'ZALGO', 'NAME', 'SENDERCHAT', 'PREMIUM', 'RAID', 'CAS', 'LOCK', 'UNLOCK', 'REPORT'
+      ]);
+      if (modLevels.has(level)) {
+        let type = 'info';
+        if (['BAN', 'KICK', 'RAID', 'CAS', 'REPORT'].includes(level)) {
+          type = 'error';
+        } else if (['MUTE', 'WARNING', 'LOCK'].includes(level)) {
+          type = 'error';
+        } else if (['UNMUTE', 'UNLOCK'].includes(level)) {
+          type = 'success';
+        }
+        showToast(`[${level}] ${msg}`, type);
+      }
+    });
+
+    // Bulk historical logs
+    socket.on('init_logs', (logs) => {
+      terminalConsole.innerHTML = '';
+      allLogs.length = 0;
+      logs.forEach(log => {
+        appendLogLine(log);
+        allLogs.push(log);
+      });
+      updateHistoryTable();
+    });
+
+    // Populate the log-level filter dropdown from the server's known levels
+    fetch('/api/log-levels', { credentials: 'same-origin' }).then(r => r.json()).then(levels => {
+      const seen = new Set([...logFilterLevel.options].map(o => o.value));
+      levels.forEach(lvl => {
+        if (seen.has(lvl)) return;
+        const opt = document.createElement('option');
+        opt.value = lvl;
+        opt.textContent = lvl.charAt(0) + lvl.slice(1).toLowerCase();
+        logFilterLevel.appendChild(opt);
+      });
+    }).catch(() => {});
+
+    // Real-time counter metrics
+    socket.on('stats_update', (stats) => {
+      statMessages.textContent = stats.messagesProcessed;
+      statSpam.textContent = stats.spamBlocked;
+      statLinks.textContent = stats.linksDeleted;
+      statWarns.textContent = stats.warningsIssued;
+      statBans.textContent = stats.usersBanned;
+      statMutes.textContent = stats.usersMuted;
+      statProfanity.textContent = stats.profanityDeleted;
+
+      // Update Group Checklists
+      const chkGroup = document.getElementById('chk-group');
+      const chkAdmin = document.getElementById('chk-admin');
+      if (stats.messagesProcessed > 0) {
+        chkGroup.className = 'checked';
+        chkGroup.innerHTML = '<i class="fa-solid fa-check-circle"></i> Add Bot to Group';
+        chkAdmin.className = 'checked';
+        chkAdmin.innerHTML = '<i class="fa-solid fa-check-circle"></i> Promote Bot to Admin';
+      }
+    });
+
+    // Real-time status toggle sync
+    socket.on('status_change', (status) => {
+      updateBotStatusUI(status.online);
+      if (status.online) {
+        showToast('Bot engine started successfully.', 'success');
+      } else {
+        showToast('Bot engine stopped.', 'info');
+      }
+    });
+
+    // Data tables refresh request
+    socket.on('data_update', () => {
+      loadModData();
+      loadBots();
+    });
+
+    // Live routine-scan progress (button label + summary panel update)
+    socket.on('scan_progress', (p) => {
+      if (!p) return;
+      if (btnRoutineScanLabel) {
+        if (p.phase === 'start') {
+          btnRoutineScanLabel.textContent = `Scanning 0 / ${p.total}…`;
+        } else if (p.phase === 'progress') {
+          btnRoutineScanLabel.textContent = `Scanning ${p.scanned} / ${p.total} (${p.deleted} hit${p.deleted === 1 ? '' : 's'})`;
+        } else if (p.phase === 'done') {
+          btnRoutineScanLabel.textContent = 'Scan now';
+          if (btnRoutineScan) btnRoutineScan.disabled = false;
+        }
+      }
+      if (p.phase === 'done' && lastScanSummary) renderScanSummary(p);
+    });
+  }
+
+  // Auth forms
+  createAdminForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (caPassword.value !== caPasswordConfirm.value) {
+      return showToast('Passwords do not match.', 'error');
+    }
+    try {
+      const res = await fetch('/api/create-admin', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: caUsername.value.trim(), password: caPassword.value })
+      }).then(r => r.json());
+      if (res.success) {
+        showToast('Admin account created. Signed in.', 'success');
+        caPassword.value = ''; caPasswordConfirm.value = '';
+        checkBotStatus();
+      } else {
+        showToast(res.error || 'Failed to create admin.', 'error');
+      }
+    } catch (err) {
+      showToast('Cannot reach server.', 'error');
+    }
+  });
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: loginUsername.value.trim(), password: loginPassword.value })
+      }).then(r => r.json().then(j => ({ status: r.status, body: j })));
+      if (res.body.success) {
+        showToast('Signed in.', 'success');
+        loginPassword.value = '';
+        checkBotStatus();
+      } else if (res.status === 429) {
+        showToast(`Too many attempts. Try again in ${res.body.retry_after || 60}s.`, 'error');
+      } else {
+        showToast('Invalid credentials.', 'error');
+      }
+    } catch (err) {
+      showToast('Cannot reach server.', 'error');
+    }
+  });
+
+  if (logoutBtn) logoutBtn.addEventListener('click', async () => {
+    try {
+      await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+    } catch (e) {}
+    if (socket) { socket.disconnect(); socket = null; }
+    showAuthScreen('login');
+    showToast('Signed out.', 'info');
+  });
+
+  if (changePasswordForm) changePasswordForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (cpNew.value !== cpNewConfirm.value) {
+      return showToast('New passwords do not match.', 'error');
+    }
+    try {
+      const r = await api('/api/change-password', {
+        method: 'POST',
+        body: { currentPassword: cpCurrent.value, newPassword: cpNew.value }
+      });
+      const j = await r.json();
+      if (j.success) {
+        showToast('Password rotated.', 'success');
+        cpCurrent.value = ''; cpNew.value = ''; cpNewConfirm.value = '';
+      } else {
+        showToast(j.error || 'Failed to change password.', 'error');
+      }
+    } catch (err) {
+      if (err.message !== 'unauthorized') showToast('Cannot reach server.', 'error');
+    }
+  });
+
+  // Handle Token Setup Form
+  tokenForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const token = botTokenInput.value.trim();
+    if (!token) return;
+
+    try {
+      showToast('Initializing Bot. Please wait...', 'info');
+      const response = await api('/api/setup', { method: 'POST', body: { token } });
+      const res = await response.json();
+      if (res.success) {
+        showToast('Bot setup completed successfully!', 'success');
+        showAuthScreen('app');
+        chkToken.className = 'checked';
+        chkToken.innerHTML = '<i class="fa-solid fa-check-circle"></i> Configure Bot Token';
+        initSocket();
+        loadAllSettings();
+        loadModData();
+      } else {
+        showToast(res.error || 'Failed to setup bot.', 'error');
+      }
+    } catch (err) {
+      if (err.message !== 'unauthorized') showToast('API network connection error during setup.', 'error');
+    }
+  });
+
+  // Client Side Tab Router
+  const menuItems = document.querySelectorAll('.menu-item');
+  const tabPanels = document.querySelectorAll('.tab-panel');
+  const currentTabTitle = document.getElementById('current-tab-title');
+  const currentTabDesc = document.getElementById('current-tab-desc');
+
+  const tabMeta = {
+    'tab-overview': { title: 'Overview Dashboard', desc: 'Monitor your Telegram community health and stats.' },
+    'tab-rules': { title: 'Moderation Rules', desc: 'Configure automatic security filters and response actions.' },
+    'tab-terminal': { title: 'Live Console Terminal', desc: 'Real-time output stream directly from the OctoGod moderator service.' },
+    'tab-moderation': { title: 'Moderation User Database', desc: 'Verify warning records and manage restricted accounts.' },
+    'tab-settings': { title: 'System Credentials', desc: 'View API logs, configure bot token, and manage system status.' }
+  };
+
+  menuItems.forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.preventDefault();
+      const targetTab = item.getAttribute('data-tab');
+      
+      menuItems.forEach(i => i.classList.remove('active'));
+      tabPanels.forEach(panel => panel.classList.remove('active'));
+      
+      item.classList.add('active');
+      document.getElementById(targetTab).classList.add('active');
+
+      const meta = tabMeta[targetTab];
+      if (meta) {
+        currentTabTitle.textContent = meta.title;
+        currentTabDesc.textContent = meta.desc;
+      }
+    });
+  });
+
+  // Toggle Theme (Dark / Light)
+  const themeToggle = document.getElementById('theme-toggle');
+  let isDark = true;
+  
+  if (localStorage.getItem('theme') === 'light') {
+    document.body.classList.add('light-theme');
+    themeToggle.querySelector('i').className = 'fa-solid fa-sun';
+    isDark = false;
+  }
+
+  themeToggle.addEventListener('click', () => {
+    isDark = !isDark;
+    if (isDark) {
+      document.body.classList.remove('light-theme');
+      themeToggle.querySelector('i').className = 'fa-solid fa-moon';
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.body.classList.add('light-theme');
+      themeToggle.querySelector('i').className = 'fa-solid fa-sun';
+      localStorage.setItem('theme', 'light');
+    }
+  });
+
+  // Load configuration from API
+  async function loadAllSettings() {
+    try {
+      const response = await api('/api/settings');
+      currentSettings = await response.json();
+      populateRulesForm(currentSettings);
+      updateQuickSwitches(currentSettings);
+    } catch (err) {
+      if (err.message !== 'unauthorized') showToast('Error retrieving rules database.', 'error');
+    }
+  }
+
+  // Populate configuration forms
+  function populateRulesForm(set) {
+    // Silent Mode
+    if (set.silentMode) {
+      ruleSilentEnabled.checked = !!set.silentMode.enabled;
+      ruleSilentWelcome.checked = !!set.silentMode.suppressWelcome;
+      ruleSilentAnnouncements.checked = !!set.silentMode.suppressAnnouncements;
+      ruleSilentActionNotices.checked = !!set.silentMode.suppressActionNotices;
+      ruleSilentCaptcha.checked = !!set.silentMode.suppressCaptcha;
+      toggleRuleCardBody('silent', set.silentMode.enabled);
+    }
+
+    // Welcome
+    ruleWelcomeEnabled.checked = set.welcome.enabled;
+    ruleWelcomeText.value = set.welcome.text;
+    ruleWelcomeDelete.value = set.welcome.deleteAfterSeconds;
+    toggleRuleCardBody('welcome', set.welcome.enabled);
+
+    // Anti-Spam
+    ruleSpamEnabled.checked = set.antiSpam.enabled;
+    ruleSpamMax.value = set.antiSpam.maxMessages;
+    ruleSpamInterval.value = set.antiSpam.intervalMs;
+    if (ruleSpamDuplicate) ruleSpamDuplicate.value = set.antiSpam.duplicateLimit || 3;
+    ruleSpamAction.value = set.antiSpam.action;
+    toggleRuleCardBody('spam', set.antiSpam.enabled);
+
+    // Anti-Link
+    ruleLinkEnabled.checked = set.antiLink.enabled;
+    ruleLinkAdmin.checked = set.antiLink.allowAdmins;
+    ruleLinkStrict.checked = !!set.antiLink.strictMode;
+    ruleLinkEnforceAdmins.checked = !!set.antiLink.enforceOnAdmins;
+    if (ruleLinkWhitelist) ruleLinkWhitelist.value = (set.antiLink.whitelistDomains || []).join('\n');
+    ruleLinkAction.value = set.antiLink.action;
+    toggleRuleCardBody('link', set.antiLink.enabled);
+
+    // Profanity
+    ruleProfanityEnabled.checked = set.profanity.enabled;
+    ruleProfanityBlacklist.value = set.profanity.blacklist.join(', ');
+    if (ruleProfanityEnforceAdmins) ruleProfanityEnforceAdmins.checked = !!set.profanity.enforceOnAdmins;
+    ruleProfanityAction.value = set.profanity.action;
+    toggleRuleCardBody('profanity', set.profanity.enabled);
+
+    // enforceOnAdmins on adult-emoji and preview
+    if (ruleAdultEmojiEnforceAdmins && set.antiAdultEmoji) {
+      ruleAdultEmojiEnforceAdmins.checked = !!set.antiAdultEmoji.enforceOnAdmins;
+    }
+    if (rulePreviewEnforceAdmins && set.antiPreview) {
+      rulePreviewEnforceAdmins.checked = !!set.antiPreview.enforceOnAdmins;
+    }
+
+    // New-user restrictions
+    if (set.newUserRestrictions) {
+      ruleNewUserEnabled.checked = !!set.newUserRestrictions.enabled;
+      ruleNewUserCount.value = set.newUserRestrictions.messageCount || 3;
+      ruleNewUserDuration.value = set.newUserRestrictions.durationMinutes || 1440;
+      ruleNewUserLinks.checked = !!set.newUserRestrictions.blockLinks;
+      ruleNewUserMedia.checked = !!set.newUserRestrictions.blockMedia;
+      ruleNewUserForwards.checked = !!set.newUserRestrictions.blockForwards;
+      ruleNewUserAction.value = set.newUserRestrictions.action || 'delete_and_warn';
+      toggleRuleCardBody('newuser', set.newUserRestrictions.enabled);
+    }
+
+    // Content-type filters
+    if (set.contentTypes) {
+      ruleContentEnabled.checked = !!set.contentTypes.enabled;
+      ruleContentPaid.checked = !!set.contentTypes.blockPaidMedia;
+      ruleContentSpoiler.checked = !!set.contentTypes.blockSpoilerMedia;
+      ruleContentScanPolls.checked = !!set.contentTypes.scanPolls;
+      ruleContentBlockPolls.checked = !!set.contentTypes.blockPolls;
+      ruleContentGames.checked = !!set.contentTypes.blockGames;
+      ruleContentContacts.checked = !!set.contentTypes.blockContacts;
+      ruleContentLocations.checked = !!set.contentTypes.blockLocations;
+      ruleContentRepeated.checked = !!set.contentTypes.blockRepeatedChars;
+      ruleContentMaxLen.value = set.contentTypes.maxMessageLength || 0;
+      ruleContentEnforceAdmins.checked = !!set.contentTypes.enforceOnAdmins;
+      ruleContentAction.value = set.contentTypes.action || 'delete_and_warn';
+      toggleRuleCardBody('content', set.contentTypes.enabled);
+    }
+
+    // Routine scan
+    if (set.routineScan) {
+      ruleScanEnabled.checked = !!set.routineScan.enabled;
+      ruleScanBoot.checked = !!set.routineScan.scanOnBoot;
+      ruleScanDefault.value = set.routineScan.defaultDurationHours || 24;
+      ruleScanMax.value = set.routineScan.maxDurationHours || 720;
+      ruleScanCacheSize.value = set.routineScan.cacheSizeLimit || 10000;
+      ruleScanCacheTtl.value = set.routineScan.cacheTtlDays || 7;
+      ruleScanDelay.value = set.routineScan.scanIntervalDelayMs || 35;
+      if (ruleScanAuto) ruleScanAuto.value = set.routineScan.autoIntervalHours || 0;
+      toggleRuleCardBody('scan', set.routineScan.enabled);
+      // Default the overview duration picker to the configured default
+      if (scanDurationSelect && set.routineScan.defaultDurationHours) {
+        const v = String(set.routineScan.defaultDurationHours);
+        const opt = [...scanDurationSelect.options].find(o => o.value === v);
+        if (opt) scanDurationSelect.value = v;
+      }
+    }
+
+    // Captcha
+    if (set.captcha) {
+      ruleCaptchaEnabled.checked = !!set.captcha.enabled;
+      ruleCaptchaTimeout.value = set.captcha.timeoutSeconds || 90;
+      ruleCaptchaAttempts.value = set.captcha.maxAttempts || 2;
+      ruleCaptchaKick.checked = !!set.captcha.kickOnFail;
+      ruleCaptchaDm.checked = set.captcha.tryDmFirst !== false;
+      ruleCaptchaSilent.checked = set.captcha.disableNotification !== false;
+      toggleRuleCardBody('captcha', set.captcha.enabled);
+    }
+    // CAS
+    if (set.cas) {
+      ruleCasEnabled.checked = !!set.cas.enabled;
+      ruleCasAction.value = set.cas.action || 'ban';
+      toggleRuleCardBody('cas', set.cas.enabled);
+    }
+    // Name Filter
+    if (set.nameFilter) {
+      ruleNameFilterEnabled.checked = !!set.nameFilter.enabled;
+      ruleNameFilterAction.value = set.nameFilter.action || 'ban';
+      toggleRuleCardBody('namefilter', set.nameFilter.enabled);
+    }
+    // Anti Sender-Chat
+    if (set.antiSenderChat) {
+      ruleSenderChatEnabled.checked = !!set.antiSenderChat.enabled;
+      ruleSenderChatAction.value = set.antiSenderChat.action || 'delete_and_warn';
+      toggleRuleCardBody('senderchat', set.antiSenderChat.enabled);
+    }
+    // Anti Zalgo
+    if (set.antiZalgo) {
+      ruleZalgoEnabled.checked = !!set.antiZalgo.enabled;
+      ruleZalgoMax.value = set.antiZalgo.maxCombiningChars || 30;
+      ruleZalgoRtl.checked = !!set.antiZalgo.blockRtlOverride;
+      ruleZalgoAction.value = set.antiZalgo.action || 'delete_and_warn';
+      toggleRuleCardBody('zalgo', set.antiZalgo.enabled);
+    }
+
+    // Anti-Raid
+    ruleRaidEnabled.checked = set.antiRaid.enabled;
+    ruleRaidLimit.value = set.antiRaid.joinLimit;
+    ruleRaidInterval.value = set.antiRaid.intervalSeconds;
+    ruleRaidAction.value = set.antiRaid.action;
+    toggleRuleCardBody('raid', set.antiRaid.enabled);
+
+    // Anti-Forward
+    if (set.antiForward) {
+      ruleForwardEnabled.checked = !!set.antiForward.enabled;
+      ruleForwardChannels.checked = !!set.antiForward.blockChannels;
+      ruleForwardUsers.checked = !!set.antiForward.blockUsers;
+      ruleForwardHidden.checked = !!set.antiForward.blockHidden;
+      ruleForwardAction.value = set.antiForward.action || 'delete_and_warn';
+      toggleRuleCardBody('forward', set.antiForward.enabled);
+    }
+
+    // Anti-Mention
+    if (set.antiMention) {
+      ruleMentionEnabled.checked = !!set.antiMention.enabled;
+      ruleMentionChannels.checked = !!set.antiMention.blockChannelMentions;
+      ruleMentionUsers.checked = !!set.antiMention.blockUserMentions;
+      ruleMentionWhitelist.value = (set.antiMention.whitelistUsernames || []).join(', ');
+      ruleMentionAction.value = set.antiMention.action || 'delete_and_warn';
+      toggleRuleCardBody('mention', set.antiMention.enabled);
+    }
+
+    // Anti-Media (NSFW)
+    if (set.antiMedia) {
+      ruleMediaEnabled.checked = !!set.antiMedia.enabled;
+      ruleMediaCaptions.checked = !!set.antiMedia.scanCaptions;
+      ruleMediaFilenames.checked = !!set.antiMedia.scanFileNames;
+      ruleMediaStickerEmoji.checked = !!set.antiMedia.scanStickerEmoji;
+      ruleMediaBlockStickers.checked = !!set.antiMedia.blockStickers;
+      ruleMediaBlockGifs.checked = !!set.antiMedia.blockAnimations;
+      ruleMediaBlockVideoNotes.checked = !!set.antiMedia.blockVideoNotes;
+      ruleMediaBlockPhotos.checked = !!set.antiMedia.blockPhotos;
+      ruleMediaBlockVideos.checked = !!set.antiMedia.blockVideos;
+      ruleMediaBlockDocuments.checked = !!set.antiMedia.blockDocuments;
+      ruleMediaBlockVoice.checked = !!set.antiMedia.blockVoice;
+      ruleMediaRequireCaption.checked = !!set.antiMedia.requireCaptionForPhotos;
+      ruleMediaMinCaption.value = set.antiMedia.minPhotoCaptionLen || 0;
+      ruleMediaAction.value = set.antiMedia.action || 'delete_and_warn';
+      toggleRuleCardBody('media', set.antiMedia.enabled);
+    }
+
+    // Anti-Button
+    if (set.antiButton) {
+      ruleButtonEnabled.checked = !!set.antiButton.enabled;
+      ruleButtonInline.checked = !!set.antiButton.blockInlineKeyboards;
+      ruleButtonViaBot.checked = !!set.antiButton.blockViaBot;
+      ruleButtonText.checked = !!set.antiButton.blockButtonText;
+      ruleButtonAction.value = set.antiButton.action || 'delete_and_warn';
+      toggleRuleCardBody('button', set.antiButton.enabled);
+    }
+
+    // Anti-Preview
+    if (set.antiPreview) {
+      rulePreviewEnabled.checked = !!set.antiPreview.enabled;
+      rulePreviewWeb.checked = !!set.antiPreview.blockWebPreviews;
+      rulePreviewAction.value = set.antiPreview.action || 'delete_and_warn';
+      toggleRuleCardBody('preview', set.antiPreview.enabled);
+    }
+
+    // Anti-Premium Emoji & Sticker
+    if (set.antiPremiumEmoji) {
+      rulePremiumEnabled.checked = !!set.antiPremiumEmoji.enabled;
+      rulePremiumEnforceAdmins.checked = !!set.antiPremiumEmoji.enforceOnAdmins;
+      rulePremiumAll.checked = !!set.antiPremiumEmoji.blockAllCustomEmoji;
+      rulePremiumVideo.checked = !!set.antiPremiumEmoji.blockVideoStickers;
+      rulePremiumAnimated.checked = !!set.antiPremiumEmoji.blockAnimatedStickers;
+      rulePremiumEmojiBlocklist.value = (set.antiPremiumEmoji.customEmojiBlocklist || []).join('\n');
+      rulePremiumSetBlocklist.value = (set.antiPremiumEmoji.stickerSetBlocklist || []).join('\n');
+      rulePremiumAction.value = set.antiPremiumEmoji.action || 'delete_and_warn';
+      toggleRuleCardBody('premium', set.antiPremiumEmoji.enabled);
+    }
+
+    // Anti-Adult-Emoji
+    if (set.antiAdultEmoji) {
+      ruleAdultEmojiEnabled.checked = !!set.antiAdultEmoji.enabled;
+      ruleAdultEmojiThreshold.value = set.antiAdultEmoji.threshold || 2;
+      ruleAdultEmojiDensity.value = set.antiAdultEmoji.densityRatio || 0.4;
+      ruleAdultEmojiSticker.checked = !!set.antiAdultEmoji.blockOnSticker;
+      ruleAdultEmojiCaptions.checked = !!set.antiAdultEmoji.scanCaptions;
+      ruleAdultEmojiAction.value = set.antiAdultEmoji.action || 'delete_and_warn';
+      toggleRuleCardBody('adultemoji', set.antiAdultEmoji.enabled);
+    }
+  }
+
+  // Update quick controls switch positions
+  function updateQuickSwitches(set) {
+    quickWelcomeToggle.checked = set.welcome.enabled;
+    quickWelcomeLabel.textContent = set.welcome.enabled ? 'Active' : 'Disabled';
+
+    quickSpamToggle.checked = set.antiSpam.enabled;
+    quickSpamLabel.textContent = set.antiSpam.enabled ? 'Active' : 'Disabled';
+
+    quickLinkToggle.checked = set.antiLink.enabled;
+    quickLinkLabel.textContent = set.antiLink.enabled ? 'Active' : 'Disabled';
+
+    quickRaidToggle.checked = set.antiRaid.enabled;
+    quickRaidLabel.textContent = set.antiRaid.enabled ? 'Active' : 'Disabled';
+  }
+
+  // Quick action card toggling behavior
+  function toggleRuleCardBody(key, enabled) {
+    const body = document.getElementById(`body-${key}`);
+    if (body) {
+      if (enabled) {
+        body.classList.remove('disabled');
+      } else {
+        body.classList.add('disabled');
+      }
+    }
+  }
+
+  // Hook rules change selectors
+  [
+    { check: ruleWelcomeEnabled, key: 'welcome' },
+    { check: ruleSpamEnabled, key: 'spam' },
+    { check: ruleLinkEnabled, key: 'link' },
+    { check: ruleProfanityEnabled, key: 'profanity' },
+    { check: ruleRaidEnabled, key: 'raid' },
+    { check: ruleForwardEnabled, key: 'forward' },
+    { check: ruleMentionEnabled, key: 'mention' },
+    { check: ruleMediaEnabled, key: 'media' },
+    { check: ruleButtonEnabled, key: 'button' },
+    { check: rulePreviewEnabled, key: 'preview' },
+    { check: ruleAdultEmojiEnabled, key: 'adultemoji' },
+    { check: rulePremiumEnabled, key: 'premium' },
+    { check: ruleSilentEnabled, key: 'silent' },
+    { check: ruleCaptchaEnabled, key: 'captcha' },
+    { check: ruleCasEnabled, key: 'cas' },
+    { check: ruleNameFilterEnabled, key: 'namefilter' },
+    { check: ruleSenderChatEnabled, key: 'senderchat' },
+    { check: ruleZalgoEnabled, key: 'zalgo' },
+    { check: ruleScanEnabled, key: 'scan' },
+    { check: ruleNewUserEnabled, key: 'newuser' },
+    { check: ruleContentEnabled, key: 'content' }
+  ].forEach(item => {
+    if (!item.check) return;
+    item.check.addEventListener('change', () => {
+      toggleRuleCardBody(item.key, item.check.checked);
+    });
+  });
+
+  // Handle saving configurations
+  rulesForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    // Parse keywords
+    const blacklistWords = ruleProfanityBlacklist.value
+      .split(',')
+      .map(w => w.trim())
+      .filter(w => w.length > 0);
+
+    const payload = {
+      silentMode: {
+        enabled: ruleSilentEnabled.checked,
+        suppressWelcome: ruleSilentWelcome.checked,
+        suppressAnnouncements: ruleSilentAnnouncements.checked,
+        suppressActionNotices: ruleSilentActionNotices.checked,
+        suppressCaptcha: ruleSilentCaptcha.checked
+      },
+      welcome: {
+        enabled: ruleWelcomeEnabled.checked,
+        text: ruleWelcomeText.value,
+        deleteAfterSeconds: parseInt(ruleWelcomeDelete.value, 10) || 0
+      },
+      antiSpam: {
+        enabled: ruleSpamEnabled.checked,
+        maxMessages: parseInt(ruleSpamMax.value, 10) || 5,
+        intervalMs: parseInt(ruleSpamInterval.value, 10) || 3000,
+        duplicateLimit: parseInt(ruleSpamDuplicate && ruleSpamDuplicate.value, 10) || 3,
+        action: ruleSpamAction.value
+      },
+      antiLink: {
+        enabled: ruleLinkEnabled.checked,
+        allowAdmins: ruleLinkAdmin.checked,
+        strictMode: ruleLinkStrict.checked,
+        enforceOnAdmins: ruleLinkEnforceAdmins.checked,
+        whitelistDomains: ruleLinkWhitelist
+          ? ruleLinkWhitelist.value.split(/[\s,]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
+          : [],
+        action: ruleLinkAction.value
+      },
+      profanity: {
+        enabled: ruleProfanityEnabled.checked,
+        blacklist: blacklistWords,
+        enforceOnAdmins: ruleProfanityEnforceAdmins ? ruleProfanityEnforceAdmins.checked : true,
+        action: ruleProfanityAction.value
+      },
+      captcha: {
+        enabled: ruleCaptchaEnabled.checked,
+        timeoutSeconds: parseInt(ruleCaptchaTimeout.value, 10) || 90,
+        maxAttempts: parseInt(ruleCaptchaAttempts.value, 10) || 2,
+        kickOnFail: ruleCaptchaKick.checked,
+        tryDmFirst: ruleCaptchaDm.checked,
+        disableNotification: ruleCaptchaSilent.checked
+      },
+      cas: {
+        enabled: ruleCasEnabled.checked,
+        action: ruleCasAction.value
+      },
+      nameFilter: {
+        enabled: ruleNameFilterEnabled.checked,
+        action: ruleNameFilterAction.value
+      },
+      antiSenderChat: {
+        enabled: ruleSenderChatEnabled.checked,
+        action: ruleSenderChatAction.value
+      },
+      antiZalgo: {
+        enabled: ruleZalgoEnabled.checked,
+        maxCombiningChars: parseInt(ruleZalgoMax.value, 10) || 30,
+        blockRtlOverride: ruleZalgoRtl.checked,
+        action: ruleZalgoAction.value
+      },
+      routineScan: {
+        enabled: ruleScanEnabled.checked,
+        scanOnBoot: ruleScanBoot.checked,
+        defaultDurationHours: parseInt(ruleScanDefault.value, 10) || 24,
+        maxDurationHours: parseInt(ruleScanMax.value, 10) || 720,
+        cacheSizeLimit: parseInt(ruleScanCacheSize.value, 10) || 10000,
+        cacheTtlDays: parseInt(ruleScanCacheTtl.value, 10) || 7,
+        scanIntervalDelayMs: parseInt(ruleScanDelay.value, 10) || 35,
+        autoIntervalHours: parseInt(ruleScanAuto && ruleScanAuto.value, 10) || 0
+      },
+      newUserRestrictions: {
+        enabled: ruleNewUserEnabled.checked,
+        messageCount: parseInt(ruleNewUserCount.value, 10) || 3,
+        durationMinutes: parseInt(ruleNewUserDuration.value, 10) || 1440,
+        blockLinks: ruleNewUserLinks.checked,
+        blockMedia: ruleNewUserMedia.checked,
+        blockForwards: ruleNewUserForwards.checked,
+        action: ruleNewUserAction.value
+      },
+      contentTypes: {
+        enabled: ruleContentEnabled.checked,
+        enforceOnAdmins: ruleContentEnforceAdmins.checked,
+        blockPaidMedia: ruleContentPaid.checked,
+        blockSpoilerMedia: ruleContentSpoiler.checked,
+        scanPolls: ruleContentScanPolls.checked,
+        blockPolls: ruleContentBlockPolls.checked,
+        blockGames: ruleContentGames.checked,
+        blockContacts: ruleContentContacts.checked,
+        blockLocations: ruleContentLocations.checked,
+        blockRepeatedChars: ruleContentRepeated.checked,
+        maxMessageLength: parseInt(ruleContentMaxLen.value, 10) || 0,
+        action: ruleContentAction.value
+      },
+      antiRaid: {
+        enabled: ruleRaidEnabled.checked,
+        joinLimit: parseInt(ruleRaidLimit.value, 10) || 10,
+        intervalSeconds: parseInt(ruleRaidInterval.value, 10) || 10,
+        action: ruleRaidAction.value
+      },
+      antiForward: {
+        enabled: ruleForwardEnabled.checked,
+        blockChannels: ruleForwardChannels.checked,
+        blockUsers: ruleForwardUsers.checked,
+        blockHidden: ruleForwardHidden.checked,
+        action: ruleForwardAction.value
+      },
+      antiMention: {
+        enabled: ruleMentionEnabled.checked,
+        blockChannelMentions: ruleMentionChannels.checked,
+        blockUserMentions: ruleMentionUsers.checked,
+        whitelistUsernames: ruleMentionWhitelist.value
+          .split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0),
+        action: ruleMentionAction.value
+      },
+      antiMedia: {
+        enabled: ruleMediaEnabled.checked,
+        scanCaptions: ruleMediaCaptions.checked,
+        scanFileNames: ruleMediaFilenames.checked,
+        scanStickerEmoji: ruleMediaStickerEmoji.checked,
+        blockStickers: ruleMediaBlockStickers.checked,
+        blockAnimations: ruleMediaBlockGifs.checked,
+        blockVideoNotes: ruleMediaBlockVideoNotes.checked,
+        blockPhotos: ruleMediaBlockPhotos.checked,
+        blockVideos: ruleMediaBlockVideos.checked,
+        blockDocuments: ruleMediaBlockDocuments.checked,
+        blockVoice: ruleMediaBlockVoice.checked,
+        requireCaptionForPhotos: ruleMediaRequireCaption.checked,
+        minPhotoCaptionLen: parseInt(ruleMediaMinCaption.value, 10) || 0,
+        action: ruleMediaAction.value
+      },
+      antiButton: {
+        enabled: ruleButtonEnabled.checked,
+        blockInlineKeyboards: ruleButtonInline.checked,
+        blockViaBot: ruleButtonViaBot.checked,
+        blockButtonText: ruleButtonText.checked,
+        action: ruleButtonAction.value
+      },
+      antiPreview: {
+        enabled: rulePreviewEnabled.checked,
+        blockWebPreviews: rulePreviewWeb.checked,
+        enforceOnAdmins: rulePreviewEnforceAdmins ? rulePreviewEnforceAdmins.checked : true,
+        action: rulePreviewAction.value
+      },
+      antiAdultEmoji: {
+        enabled: ruleAdultEmojiEnabled.checked,
+        threshold: parseInt(ruleAdultEmojiThreshold.value, 10) || 2,
+        densityRatio: parseFloat(ruleAdultEmojiDensity.value) || 0.4,
+        blockOnSticker: ruleAdultEmojiSticker.checked,
+        scanCaptions: ruleAdultEmojiCaptions.checked,
+        enforceOnAdmins: ruleAdultEmojiEnforceAdmins ? ruleAdultEmojiEnforceAdmins.checked : true,
+        action: ruleAdultEmojiAction.value
+      },
+      antiPremiumEmoji: {
+        enabled: rulePremiumEnabled.checked,
+        enforceOnAdmins: rulePremiumEnforceAdmins.checked,
+        blockAllCustomEmoji: rulePremiumAll.checked,
+        blockVideoStickers: rulePremiumVideo.checked,
+        blockAnimatedStickers: rulePremiumAnimated.checked,
+        customEmojiBlocklist: parseList(rulePremiumEmojiBlocklist.value, /^\d{1,30}$/),
+        stickerSetBlocklist: parseList(rulePremiumSetBlocklist.value, /^[A-Za-z0-9_]{1,64}$/),
+        action: rulePremiumAction.value
+      }
+    };
+
+    try {
+      const response = await api('/api/settings', { method: 'POST', body: payload });
+      const res = await response.json();
+      if (res.success) {
+        currentSettings = res.settings;
+        updateQuickSwitches(currentSettings);
+        showToast('Moderation rules saved successfully.', 'success');
+      } else {
+        showToast('Failed to save rules database.', 'error');
+      }
+    } catch (err) {
+      if (err.message !== 'unauthorized') showToast('Network error saving configuration.', 'error');
+    }
+  });
+
+  // Reset rules modifications to database state
+  rulesResetBtn.addEventListener('click', () => {
+    if (currentSettings) {
+      populateRulesForm(currentSettings);
+      showToast('Modifications reset to last saved state.', 'info');
+    }
+  });
+
+  // Quick Controls handlers
+  async function saveSingleQuickSetting(key, val) {
+    if (!currentSettings) return;
+    
+    const copy = { ...currentSettings };
+    copy[key].enabled = val;
+
+    try {
+      const response = await api('/api/settings', { method: 'POST', body: copy });
+      const res = await response.json();
+      if (res.success) {
+        currentSettings = res.settings;
+        populateRulesForm(currentSettings);
+        updateQuickSwitches(currentSettings);
+        showToast(`${key.toUpperCase()} state updated.`, 'success');
+      }
+    } catch (err) {
+      if (err.message !== 'unauthorized') showToast('Error syncing quick setting.', 'error');
+    }
+  }
+
+  quickWelcomeToggle.addEventListener('change', () => {
+    saveSingleQuickSetting('welcome', quickWelcomeToggle.checked);
+  });
+  quickSpamToggle.addEventListener('change', () => {
+    saveSingleQuickSetting('antiSpam', quickSpamToggle.checked);
+  });
+  quickLinkToggle.addEventListener('change', () => {
+    saveSingleQuickSetting('antiLink', quickLinkToggle.checked);
+  });
+  quickRaidToggle.addEventListener('change', () => {
+    saveSingleQuickSetting('antiRaid', quickRaidToggle.checked);
+  });
+
+  // Console Logs Processing
+  function appendLogLine(log) {
+    const line = document.createElement('div');
+    line.className = `terminal-line log-level-${log.level.toLowerCase()}`;
+    line.setAttribute('data-level', log.level);
+
+    const timeString = new Date(log.timestamp).toLocaleTimeString();
+    
+    line.innerHTML = `
+      <span class="line-time">[${timeString}]</span>
+      <span class="line-level level-${log.level.toLowerCase()}">${log.level}</span>
+      <span class="line-msg">${escapeHtml(log.message)}</span>
+    `;
+
+    terminalConsole.appendChild(line);
+    
+    // Auto-scroll if close to bottom
+    const threshold = 80;
+    const isAtBottom = terminalConsole.scrollHeight - terminalConsole.clientHeight - terminalConsole.scrollTop < threshold;
+    if (isAtBottom) {
+      terminalConsole.scrollTop = terminalConsole.scrollHeight;
+    }
+
+    applyTerminalFilters();
+  }
+
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function updateHistoryTable() {
+    if (!historyTbody) return;
+    
+    const modLevels = new Set([
+      'BAN', 'UNBAN', 'KICK', 'MUTE', 'UNMUTE', 'WARNING', 'DELETE',
+      'SPAM', 'FLOOD', 'LINK', 'FORWARD', 'MENTION', 'MEDIA', 'BUTTON', 'PREVIEW',
+      'PROFANITY', 'ZALGO', 'NAME', 'SENDERCHAT', 'PREMIUM', 'RAID', 'CAS', 'LOCK', 'UNLOCK', 'REPORT',
+      'NEWUSER', 'CONTENT', 'GBAN'
+    ]);
+    
+    const filtered = allLogs
+      .filter(log => modLevels.has(log.level))
+      .slice(-50)
+      .reverse();
+      
+    if (filtered.length === 0) {
+      historyTbody.innerHTML = `<tr><td colspan="4" class="center-text text-muted">No recent events recorded.</td></tr>`;
+      return;
+    }
+    
+    historyTbody.innerHTML = filtered.map(log => {
+      const time = new Date(log.timestamp).toLocaleString();
+      let badgeClass = 'yellow-bg';
+      if (['BAN', 'RAID', 'CAS', 'ERROR'].includes(log.level)) badgeClass = 'red-bg';
+      if (['UNMUTE', 'UNLOCK'].includes(log.level)) badgeClass = 'green-bg';
+      if (['LINK', 'SPAM', 'PROFANITY', 'DELETE', 'FORWARD', 'MENTION', 'MEDIA', 'BUTTON', 'PREVIEW', 'ZALGO', 'NAME', 'SENDERCHAT', 'PREMIUM'].includes(log.level)) badgeClass = 'purple-bg';
+      
+      let userStr = 'System';
+      const userMatch = log.message.match(/@([a-zA-Z0-9_]+)/) || log.message.match(/(User_\d+)/);
+      if (userMatch) {
+        userStr = userMatch[0];
+      }
+      
+      return `
+        <tr>
+          <td><span class="text-muted">${time}</span></td>
+          <td><span class="item-badge ${badgeClass}">${log.level}</span></td>
+          <td><strong>${escapeHtml(userStr)}</strong></td>
+          <td>${escapeHtml(log.message)}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function applyTerminalFilters() {
+    const filter = logFilterLevel.value;
+    const lines = terminalConsole.querySelectorAll('.terminal-line');
+    
+    lines.forEach(line => {
+      const level = line.getAttribute('data-level');
+      if (filter === 'ALL' || level === filter) {
+        line.style.display = 'flex';
+      } else {
+        line.style.display = 'none';
+      }
+    });
+  }
+
+  logFilterLevel.addEventListener('change', applyTerminalFilters);
+  
+  clearConsoleBtn.addEventListener('click', () => {
+    terminalConsole.innerHTML = '';
+    showToast('Terminal logs cleared from screen.', 'info');
+  });
+
+  // Load Moderation Database (Warnings, Bans)
+  async function loadModData() {
+    try {
+      const response = await api('/api/data');
+      const data = await response.json();
+      
+      // Update stats counters
+      statBans.textContent = data.bans.length;
+      statMutes.textContent = data.mutes.length;
+
+      // Populate Warnings Table
+      warningsTbody.innerHTML = '';
+      const warningIds = Object.keys(data.warnings);
+      
+      if (warningIds.length === 0) {
+        warningsTbody.innerHTML = `<tr><td colspan="5" class="center-text text-muted">No warnings issued yet.</td></tr>`;
+      } else {
+        warningIds.forEach(id => {
+          const userObj = data.warnings[id];
+          const tr = document.createElement('tr');
+          const lastReason = userObj.reasons[userObj.reasons.length - 1];
+          const reasonText = lastReason ? lastReason.reason : 'No reason';
+          
+          tr.innerHTML = `
+            <td><code>${id}</code></td>
+            <td><strong>@${userObj.username || id}</strong></td>
+            <td><span class="item-badge ${userObj.count >= 2 ? 'red-bg' : 'yellow-bg'}">${userObj.count}/3</span></td>
+            <td>${reasonText}</td>
+            <td>
+              <button class="btn btn-secondary btn-small clear-warns-btn" data-id="${id}">
+                <i class="fa-solid fa-rotate-left"></i> Reset Warns
+              </button>
+            </td>
+          `;
+          warningsTbody.appendChild(tr);
+        });
+
+        // Add action listener to clear warning buttons
+        document.querySelectorAll('.clear-warns-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const userId = btn.getAttribute('data-id');
+            await triggerClearWarnings(userId);
+          });
+        });
+      }
+
+      // Populate Bans Table
+      bansTbody.innerHTML = '';
+      if (data.bans.length === 0) {
+        bansTbody.innerHTML = `<tr><td colspan="6" class="center-text text-muted">No bans recorded.</td></tr>`;
+      } else {
+        data.bans.forEach(ban => {
+          const tr = document.createElement('tr');
+          const banTime = new Date(ban.bannedAt).toLocaleString();
+          const isActive = ban.active !== false;
+          const statusBadge = isActive
+            ? `<span class="item-badge red-bg">Banned</span>`
+            : `<span class="item-badge yellow-bg">Unbanned</span>`;
+          const actionCell = isActive
+            ? `<button class="btn btn-secondary btn-small unban-btn" data-id="${ban.userId}" data-chat="${ban.chatId || ''}">
+                 <i class="fa-solid fa-unlock"></i> Unban
+               </button>`
+            : `<button class="btn btn-outline btn-small purge-ban-btn" data-id="${ban.userId}" title="Remove from log">
+                 <i class="fa-solid fa-trash"></i>
+               </button>`;
+          tr.innerHTML = `
+            <td><code>${ban.userId}</code></td>
+            <td><strong>@${ban.username}</strong></td>
+            <td>${banTime}</td>
+            <td>${ban.reason}</td>
+            <td>${statusBadge}</td>
+            <td>${actionCell}</td>
+          `;
+          bansTbody.appendChild(tr);
+        });
+
+        document.querySelectorAll('.unban-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const userId = btn.getAttribute('data-id');
+            const chatIdRaw = btn.getAttribute('data-chat');
+            const chatId = chatIdRaw ? Number(chatIdRaw) : null;
+            await triggerUnban(userId, chatId);
+          });
+        });
+      }
+
+    } catch (err) {
+      if (err.message !== 'unauthorized') showToast('Error reading moderation databases.', 'error');
+    }
+  }
+
+  async function triggerUnban(userId, chatId) {
+    try {
+      const body = chatId ? { userId, chatId } : { userId };
+      const response = await api('/api/action/unban', { method: 'POST', body });
+      const res = await response.json();
+      if (res.success) {
+        showToast(res.message || 'User unbanned.', 'success');
+        loadModData();
+      } else {
+        showToast(res.error || 'Failed to unban user.', 'error');
+      }
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('API request error unbanning user.', 'error');
+    }
+  }
+
+  async function triggerClearWarnings(userId) {
+    try {
+      const response = await api('/api/action/clear-warns', { method: 'POST', body: { userId } });
+      const res = await response.json();
+      if (res.success) {
+        showToast('Warnings reset successfully.', 'success');
+        loadModData();
+      } else {
+        showToast(res.error || 'Failed to clear warnings.', 'error');
+      }
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('API request error clearing warnings.', 'error');
+    }
+  }
+
+  // System Controls Hooking
+  async function triggerBotControlAction(action) {
+    try {
+      showToast(`Triggering bot ${action}...`, 'info');
+      const response = await api(`/api/action/${action}`, { method: 'POST' });
+      const res = await response.json();
+      if (res.success) {
+        showToast(res.message, 'success');
+        checkBotStatus();
+      } else {
+        showToast(res.error || 'Control action failed.', 'error');
+      }
+    } catch (err) {
+      if (err.message !== 'unauthorized') showToast('Network error triggering bot actions.', 'error');
+    }
+  }
+
+  btnRestartBot.addEventListener('click', () => triggerBotControlAction('restart'));
+  btnStopBot.addEventListener('click', () => triggerBotControlAction('stop'));
+
+  // --- Routine Scan: duration picker + Scan-now button + last-result render ---
+  function getSelectedScanHours() {
+    if (!scanDurationSelect) return 24;
+    if (scanDurationSelect.value === 'custom') {
+      return Math.max(1, Math.min(parseInt(scanDurationCustom.value, 10) || 24, 8760));
+    }
+    return parseInt(scanDurationSelect.value, 10) || 24;
+  }
+  if (scanDurationSelect) {
+    scanDurationSelect.addEventListener('change', () => {
+      scanDurationCustom.style.display = scanDurationSelect.value === 'custom' ? 'block' : 'none';
+    });
+  }
+  function renderScanSummary(summary) {
+    if (!lastScanSummary || !summary) return;
+    const when = summary.completedAt ? new Date(summary.completedAt).toLocaleString()
+                                     : new Date(summary.startedAt || Date.now()).toLocaleString();
+    const byRule = Object.entries(summary.byRule || {}).map(([k, v]) => `${k}: ${v}`).join(', ') || '(no rule hits)';
+    const samples = (summary.sampleDeletes || []).slice(0, 3)
+      .map(s => `<div class="text-muted">• <strong>${s.rule}</strong> @${s.user}: ${escapeHtml(s.text || s.reason)}</div>`)
+      .join('');
+    lastScanSummary.innerHTML = `
+      <div><strong>Window:</strong> last ${summary.durationHours}h <span class="text-muted">(${summary.trigger || 'manual'})</span></div>
+      <div><strong>Scanned:</strong> ${summary.scanned} of ${summary.total || summary.scanned}
+           • <strong>Deleted:</strong> ${summary.deleted}
+           • <span class="text-muted">already gone: ${summary.alreadyGone || 0}, errors: ${summary.errors}</span></div>
+      <div class="text-muted">Breakdown — ${byRule}</div>
+      ${samples}
+      <div class="text-muted">Finished ${when}</div>`;
+  }
+  async function loadLastScan() {
+    try {
+      const r = await api('/api/scans');
+      const list = await r.json();
+      if (Array.isArray(list) && list.length) renderScanSummary(list[list.length - 1]);
+    } catch (e) {}
+  }
+  if (btnRoutineScan) {
+    btnRoutineScan.addEventListener('click', async () => {
+      const hours = getSelectedScanHours();
+      btnRoutineScan.disabled = true;
+      btnRoutineScanLabel.textContent = `Scanning… (${hours}h)`;
+      try {
+        const r = await api('/api/action/routine-scan', { method: 'POST', body: { hours } });
+        const j = await r.json();
+        if (j.success) {
+          renderScanSummary(j.summary);
+          showToast(`Scan done — ${j.summary.deleted} deleted of ${j.summary.scanned} scanned.`, 'success');
+          loadModData();
+        } else {
+          showToast(j.error || 'Scan failed.', 'error');
+        }
+      } catch (e) {
+        if (e.message !== 'unauthorized') showToast('Scan request error.', 'error');
+      } finally {
+        btnRoutineScan.disabled = false;
+        btnRoutineScanLabel.textContent = 'Scan now';
+      }
+    });
+  }
+  // Don't call this at startup — it would 401 before login and bounce the
+  // unauthenticated visitor to the sign-in screen even when no admin exists.
+  // loadLastScan is invoked from checkBotStatus() once we're authenticated.
+  
+  // Quick status bar button (Stop / Start toggle)
+  quickActionStatusBtn.addEventListener('click', () => {
+    const text = quickActionText.textContent.toLowerCase();
+    if (text.includes('stop')) {
+      triggerBotControlAction('stop');
+    } else {
+      triggerBotControlAction('restart');
+    }
+  });
+
+  // Re-enter token settings (legacy single-bot flow — element may not exist in multi-bot UI)
+  if (btnChangeToken) btnChangeToken.addEventListener('click', () => {
+    setupWizard.classList.remove('hidden');
+    appContainer.classList.add('hidden');
+    botTokenInput.value = '';
+    botTokenInput.focus();
+  });
+
+  // Reveal Token display (legacy)
+  let tokenRevealed = false;
+  if (revealTokenBtn) revealTokenBtn.addEventListener('click', async () => {
+    tokenRevealed = !tokenRevealed;
+    if (tokenRevealed) {
+      try {
+        const response = await api('/api/status');
+        const status = await response.json();
+        // Since we don't return the raw token on client API to prevent leakage, we show we are holding it,
+        // but if they click, we can guide them to change token
+        if (activeTokenInput) activeTokenInput.value = "Active (Stored in .env)";
+        revealTokenBtn.innerHTML = '<i class="fa-solid fa-eye-slash"></i> Hide';
+      } catch (err) {}
+    } else {
+      if (activeTokenInput) activeTokenInput.value = "••••••••••••••••••••••••••••••••";
+      revealTokenBtn.innerHTML = '<i class="fa-solid fa-eye"></i> Show';
+    }
+  });
+
+  // -------- Multi-bot manager --------
+  async function loadBots() {
+    if (!botsTbody) return;
+    try {
+      const r = await api('/api/bots');
+      const list = await r.json();
+      if (!Array.isArray(list) || list.length === 0) {
+        botsTbody.innerHTML = `<tr><td colspan="6" class="center-text text-muted">No bots configured yet. Add one below.</td></tr>`;
+        return;
+      }
+      botsTbody.innerHTML = '';
+      for (const b of list) {
+        const tr = document.createElement('tr');
+        const addedAt = b.addedAt ? new Date(b.addedAt).toLocaleString() : '—';
+        const statusBadge = b.online
+          ? '<span class="item-badge" style="background:rgba(0,200,0,0.2);color:#16a34a">Online</span>'
+          : '<span class="item-badge yellow-bg">Offline</span>';
+        const handle = b.username ? `@${b.username}` : (b.first_name || '(awaiting…)') ;
+        tr.innerHTML = `
+          <td><code>${b.id}</code></td>
+          <td><strong>${handle}</strong></td>
+          <td>${b.name || '<span class="text-muted">—</span>'}</td>
+          <td>${statusBadge}</td>
+          <td>${addedAt}</td>
+          <td>
+            <button class="btn btn-secondary btn-small bot-restart-btn" data-id="${b.id}" title="Restart this bot">
+              <i class="fa-solid fa-arrow-rotate-right"></i>
+            </button>
+            <button class="btn btn-outline btn-small bot-stop-btn" data-id="${b.id}" title="Stop this bot">
+              <i class="fa-solid fa-circle-stop"></i>
+            </button>
+            <button class="btn btn-danger btn-small bot-remove-btn" data-id="${b.id}" title="Remove this bot (deletes token)">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </td>`;
+        botsTbody.appendChild(tr);
+      }
+      document.querySelectorAll('.bot-restart-btn').forEach(btn => btn.addEventListener('click', () => botAction(btn.dataset.id, 'restart')));
+      document.querySelectorAll('.bot-stop-btn').forEach(btn => btn.addEventListener('click', () => botAction(btn.dataset.id, 'stop')));
+      document.querySelectorAll('.bot-remove-btn').forEach(btn => btn.addEventListener('click', () => {
+        if (confirm('Remove this bot? Its token will be deleted from disk.')) botAction(btn.dataset.id, 'remove');
+      }));
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('Could not load bots list.', 'error');
+    }
+  }
+
+  async function botAction(id, action) {
+    try {
+      let r;
+      if (action === 'remove') r = await api(`/api/bots/${id}`, { method: 'DELETE' });
+      else r = await api(`/api/bots/${id}/${action}`, { method: 'POST' });
+      const j = await r.json();
+      if (j.success) {
+        showToast(`Bot ${id}: ${action} ok.`, 'success');
+        setTimeout(loadBots, 1500); // give the bot a moment to come up
+      } else {
+        showToast(j.error || `Failed to ${action} bot.`, 'error');
+      }
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('Network error.', 'error');
+    }
+  }
+
+  if (addBotForm) addBotForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const token = newBotTokenInput.value.trim();
+    const name = (newBotNameInput.value || '').trim();
+    if (!token) return;
+    try {
+      const r = await api('/api/bots', { method: 'POST', body: { token, name } });
+      const j = await r.json();
+      if (j.success) {
+        showToast('Bot added. Starting…', 'success');
+        newBotTokenInput.value = '';
+        newBotNameInput.value = '';
+        setTimeout(loadBots, 1500);
+      } else {
+        showToast(j.error || 'Failed to add bot.', 'error');
+      }
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('Network error.', 'error');
+    }
+  });
+  // Helper functions for preset state updates
+  function setFieldChecked(element, checked) {
+    if (element) {
+      if (element.checked !== checked) {
+        element.checked = checked;
+        element.dispatchEvent(new Event('change'));
+      }
+    }
+  }
+
+  function setFieldValue(element, value) {
+    if (element) {
+      element.value = value;
+    }
+  }
+
+  // Preset selector buttons
+  const btnPresetCasual = document.getElementById('preset-casual');
+  const btnPresetStandard = document.getElementById('preset-standard');
+  const btnPresetStrict = document.getElementById('preset-strict');
+
+  if (btnPresetCasual) {
+    btnPresetCasual.addEventListener('click', () => {
+      setFieldChecked(ruleSilentEnabled, false);
+      setFieldChecked(ruleSilentWelcome, false);
+      setFieldChecked(ruleSilentAnnouncements, false);
+      setFieldChecked(ruleSilentActionNotices, false);
+      setFieldChecked(ruleSilentCaptcha, false);
+
+      setFieldChecked(ruleWelcomeEnabled, true);
+      setFieldValue(ruleWelcomeText, "Welcome to the group, {username}! 👋 Please read the guidelines.");
+      setFieldValue(ruleWelcomeDelete, 30);
+
+      setFieldChecked(ruleSpamEnabled, true);
+      setFieldValue(ruleSpamMax, 8);
+      setFieldValue(ruleSpamInterval, 3000);
+      setFieldValue(ruleSpamDuplicate, 4);
+      setFieldValue(ruleSpamAction, "warn");
+
+      setFieldChecked(ruleLinkEnabled, true);
+      setFieldChecked(ruleLinkAdmin, false);
+      setFieldChecked(ruleLinkStrict, false);
+      setFieldChecked(ruleLinkEnforceAdmins, false);
+      setFieldValue(ruleLinkAction, "delete");
+
+      setFieldChecked(ruleProfanityEnabled, true);
+      setFieldChecked(ruleProfanityEnforceAdmins, false);
+      setFieldValue(ruleProfanityAction, "delete");
+
+      setFieldChecked(ruleForwardEnabled, false);
+      setFieldChecked(ruleMentionEnabled, false);
+
+      setFieldChecked(ruleMediaEnabled, true);
+      setFieldChecked(ruleMediaCaptions, true);
+      setFieldChecked(ruleMediaFilenames, true);
+      setFieldChecked(ruleMediaStickerEmoji, true);
+      setFieldChecked(ruleMediaBlockStickers, false);
+      setFieldChecked(ruleMediaBlockGifs, false);
+      setFieldChecked(ruleMediaBlockVideoNotes, false);
+      setFieldChecked(ruleMediaBlockPhotos, false);
+      setFieldChecked(ruleMediaBlockVideos, false);
+      setFieldChecked(ruleMediaBlockDocuments, false);
+      setFieldChecked(ruleMediaBlockVoice, false);
+      setFieldChecked(ruleMediaRequireCaption, false);
+      setFieldValue(ruleMediaMinCaption, 0);
+      setFieldValue(ruleMediaAction, "delete");
+
+      setFieldChecked(rulePremiumEnabled, false);
+
+      setFieldChecked(ruleAdultEmojiEnabled, true);
+      setFieldValue(ruleAdultEmojiThreshold, 4);
+      setFieldValue(ruleAdultEmojiDensity, 0.6);
+      setFieldChecked(ruleAdultEmojiSticker, true);
+      setFieldChecked(ruleAdultEmojiCaptions, true);
+      setFieldValue(ruleAdultEmojiAction, "delete");
+
+      setFieldChecked(ruleButtonEnabled, false);
+      setFieldChecked(rulePreviewEnabled, false);
+      setFieldChecked(ruleRaidEnabled, false);
+      setFieldChecked(ruleCaptchaEnabled, false);
+
+      setFieldChecked(ruleCasEnabled, true);
+      setFieldValue(ruleCasAction, "restrict");
+
+      setFieldChecked(ruleNameFilterEnabled, true);
+      setFieldValue(ruleNameFilterAction, "kick");
+
+      setFieldChecked(ruleSenderChatEnabled, true);
+      setFieldValue(ruleSenderChatAction, "delete");
+
+      setFieldChecked(ruleZalgoEnabled, true);
+      setFieldValue(ruleZalgoMax, 40);
+      setFieldChecked(ruleZalgoRtl, true);
+      setFieldValue(ruleZalgoAction, "delete");
+
+      showToast("Applied Casual Guard settings profile. Review rules below, then click Save All Rules.", "success");
+    });
+  }
+
+  if (btnPresetStandard) {
+    btnPresetStandard.addEventListener('click', () => {
+      setFieldChecked(ruleSilentEnabled, false);
+      setFieldChecked(ruleSilentWelcome, false);
+      setFieldChecked(ruleSilentAnnouncements, false);
+      setFieldChecked(ruleSilentActionNotices, false);
+      setFieldChecked(ruleSilentCaptcha, false);
+
+      setFieldChecked(ruleWelcomeEnabled, true);
+      setFieldValue(ruleWelcomeText, "Welcome to the group, {username}! 👋 Please make sure to follow the guidelines.");
+      setFieldValue(ruleWelcomeDelete, 30);
+
+      setFieldChecked(ruleSpamEnabled, true);
+      setFieldValue(ruleSpamMax, 5);
+      setFieldValue(ruleSpamInterval, 3000);
+      setFieldValue(ruleSpamDuplicate, 3);
+      setFieldValue(ruleSpamAction, "warn");
+
+      setFieldChecked(ruleLinkEnabled, true);
+      setFieldChecked(ruleLinkAdmin, false);
+      setFieldChecked(ruleLinkStrict, true);
+      setFieldChecked(ruleLinkEnforceAdmins, true);
+      setFieldValue(ruleLinkAction, "delete_and_warn");
+
+      setFieldChecked(ruleProfanityEnabled, true);
+      setFieldChecked(ruleProfanityEnforceAdmins, true);
+      setFieldValue(ruleProfanityAction, "delete_and_warn");
+
+      setFieldChecked(ruleForwardEnabled, true);
+      setFieldChecked(ruleForwardChannels, true);
+      setFieldChecked(ruleForwardUsers, false);
+      setFieldChecked(ruleForwardHidden, true);
+      setFieldValue(ruleForwardAction, "delete_and_warn");
+
+      setFieldChecked(ruleMentionEnabled, true);
+      setFieldChecked(ruleMentionChannels, true);
+      setFieldChecked(ruleMentionUsers, false);
+      setFieldValue(ruleMentionAction, "delete_and_warn");
+
+      setFieldChecked(ruleMediaEnabled, true);
+      setFieldChecked(ruleMediaCaptions, true);
+      setFieldChecked(ruleMediaFilenames, true);
+      setFieldChecked(ruleMediaStickerEmoji, true);
+      setFieldChecked(ruleMediaBlockStickers, false);
+      setFieldChecked(ruleMediaBlockGifs, false);
+      setFieldChecked(ruleMediaBlockVideoNotes, false);
+      setFieldChecked(ruleMediaBlockPhotos, false);
+      setFieldChecked(ruleMediaBlockVideos, false);
+      setFieldChecked(ruleMediaBlockDocuments, false);
+      setFieldChecked(ruleMediaBlockVoice, false);
+      setFieldChecked(ruleMediaRequireCaption, false);
+      setFieldValue(ruleMediaMinCaption, 0);
+      setFieldValue(ruleMediaAction, "delete_and_warn");
+
+      setFieldChecked(rulePremiumEnabled, true);
+      setFieldChecked(rulePremiumEnforceAdmins, true);
+      setFieldChecked(rulePremiumAll, true);
+      setFieldChecked(rulePremiumVideo, true);
+      setFieldChecked(rulePremiumAnimated, false);
+      setFieldValue(rulePremiumAction, "delete_and_warn");
+
+      setFieldChecked(ruleAdultEmojiEnabled, true);
+      setFieldValue(ruleAdultEmojiThreshold, 2);
+      setFieldValue(ruleAdultEmojiDensity, 0.4);
+      setFieldChecked(ruleAdultEmojiSticker, true);
+      setFieldChecked(ruleAdultEmojiCaptions, true);
+      setFieldValue(ruleAdultEmojiAction, "delete_and_warn");
+
+      setFieldChecked(ruleButtonEnabled, true);
+      setFieldChecked(ruleButtonInline, true);
+      setFieldChecked(ruleButtonViaBot, true);
+      setFieldChecked(ruleButtonText, true);
+      setFieldValue(ruleButtonAction, "delete_and_warn");
+
+      setFieldChecked(rulePreviewEnabled, true);
+      setFieldChecked(rulePreviewWeb, true);
+      setFieldValue(rulePreviewAction, "delete_and_warn");
+
+      setFieldChecked(ruleRaidEnabled, true);
+      setFieldValue(ruleRaidLimit, 10);
+      setFieldValue(ruleRaidInterval, 10);
+      setFieldValue(ruleRaidAction, "restrict");
+
+      setFieldChecked(ruleCaptchaEnabled, true);
+      setFieldValue(ruleCaptchaTimeout, 90);
+      setFieldValue(ruleCaptchaAttempts, 2);
+      setFieldChecked(ruleCaptchaKick, true);
+
+      setFieldChecked(ruleCasEnabled, true);
+      setFieldValue(ruleCasAction, "ban");
+
+      setFieldChecked(ruleNameFilterEnabled, true);
+      setFieldValue(ruleNameFilterAction, "ban");
+
+      setFieldChecked(ruleSenderChatEnabled, true);
+      setFieldValue(ruleSenderChatAction, "delete_and_warn");
+
+      setFieldChecked(ruleZalgoEnabled, true);
+      setFieldValue(ruleZalgoMax, 30);
+      setFieldChecked(ruleZalgoRtl, true);
+      setFieldValue(ruleZalgoAction, "delete_and_warn");
+
+      showToast("Applied Balanced Guard preset. Review rules below, then click Save All Rules.", "success");
+    });
+  }
+
+  if (btnPresetStrict) {
+    btnPresetStrict.addEventListener('click', () => {
+      setFieldChecked(ruleSilentEnabled, false);
+      setFieldChecked(ruleSilentWelcome, false);
+      setFieldChecked(ruleSilentAnnouncements, false);
+      setFieldChecked(ruleSilentActionNotices, false);
+      setFieldChecked(ruleSilentCaptcha, false);
+
+      setFieldChecked(ruleWelcomeEnabled, true);
+      setFieldValue(ruleWelcomeText, "Welcome to our group, {username}! 🔒 Solve the captcha or be kicked.");
+      setFieldValue(ruleWelcomeDelete, 15);
+
+      setFieldChecked(ruleSpamEnabled, true);
+      setFieldValue(ruleSpamMax, 3);
+      setFieldValue(ruleSpamInterval, 4000);
+      setFieldValue(ruleSpamDuplicate, 2);
+      setFieldValue(ruleSpamAction, "mute");
+
+      setFieldChecked(ruleLinkEnabled, true);
+      setFieldChecked(ruleLinkAdmin, true);
+      setFieldChecked(ruleLinkStrict, true);
+      setFieldChecked(ruleLinkEnforceAdmins, true);
+      setFieldValue(ruleLinkAction, "ban");
+
+      setFieldChecked(ruleProfanityEnabled, true);
+      setFieldChecked(ruleProfanityEnforceAdmins, true);
+      setFieldValue(ruleProfanityAction, "ban");
+
+      setFieldChecked(ruleForwardEnabled, true);
+      setFieldChecked(ruleForwardChannels, true);
+      setFieldChecked(ruleForwardUsers, true);
+      setFieldChecked(ruleForwardHidden, true);
+      setFieldValue(ruleForwardAction, "ban");
+
+      setFieldChecked(ruleMentionEnabled, true);
+      setFieldChecked(ruleMentionChannels, true);
+      setFieldChecked(ruleMentionUsers, true);
+      setFieldValue(ruleMentionAction, "ban");
+
+      setFieldChecked(ruleMediaEnabled, true);
+      setFieldChecked(ruleMediaCaptions, true);
+      setFieldChecked(ruleMediaFilenames, true);
+      setFieldChecked(ruleMediaStickerEmoji, true);
+      setFieldChecked(ruleMediaBlockStickers, true);
+      setFieldChecked(ruleMediaBlockGifs, true);
+      setFieldChecked(ruleMediaBlockVideoNotes, true);
+      setFieldChecked(ruleMediaBlockPhotos, true);
+      setFieldChecked(ruleMediaBlockVideos, true);
+      setFieldChecked(ruleMediaBlockDocuments, true);
+      setFieldChecked(ruleMediaBlockVoice, true);
+      setFieldChecked(ruleMediaRequireCaption, true);
+      setFieldValue(ruleMediaMinCaption, 10);
+      setFieldValue(ruleMediaAction, "ban");
+
+      setFieldChecked(rulePremiumEnabled, true);
+      setFieldChecked(rulePremiumEnforceAdmins, true);
+      setFieldChecked(rulePremiumAll, true);
+      setFieldChecked(rulePremiumVideo, true);
+      setFieldChecked(rulePremiumAnimated, true);
+      setFieldValue(rulePremiumAction, "ban");
+
+      setFieldChecked(ruleAdultEmojiEnabled, true);
+      setFieldValue(ruleAdultEmojiThreshold, 1);
+      setFieldValue(ruleAdultEmojiDensity, 0.2);
+      setFieldChecked(ruleAdultEmojiSticker, true);
+      setFieldChecked(ruleAdultEmojiCaptions, true);
+      setFieldValue(ruleAdultEmojiAction, "ban");
+
+      setFieldChecked(ruleButtonEnabled, true);
+      setFieldChecked(ruleButtonInline, true);
+      setFieldChecked(ruleButtonViaBot, true);
+      setFieldChecked(ruleButtonText, true);
+      setFieldValue(ruleButtonAction, "ban");
+
+      setFieldChecked(rulePreviewEnabled, true);
+      setFieldChecked(rulePreviewWeb, true);
+      setFieldValue(rulePreviewAction, "ban");
+
+      setFieldChecked(ruleRaidEnabled, true);
+      setFieldValue(ruleRaidLimit, 5);
+      setFieldValue(ruleRaidInterval, 10);
+      setFieldValue(ruleRaidAction, "restrict");
+
+      setFieldChecked(ruleCaptchaEnabled, true);
+      setFieldValue(ruleCaptchaTimeout, 60);
+      setFieldValue(ruleCaptchaAttempts, 1);
+      setFieldChecked(ruleCaptchaKick, true);
+
+      setFieldChecked(ruleCasEnabled, true);
+      setFieldValue(ruleCasAction, "ban");
+
+      setFieldChecked(ruleNameFilterEnabled, true);
+      setFieldValue(ruleNameFilterAction, "ban");
+
+      setFieldChecked(ruleSenderChatEnabled, true);
+      setFieldValue(ruleSenderChatAction, "ban");
+
+      setFieldChecked(ruleZalgoEnabled, true);
+      setFieldValue(ruleZalgoMax, 15);
+      setFieldChecked(ruleZalgoRtl, true);
+      setFieldValue(ruleZalgoAction, "ban");
+
+      showToast("Applied Strict Guard preset. Review rules below, then click Save All Rules.", "success");
+    });
+  }
+  // Category tabs filtering inside Moderation Rules
+  const categoryButtons = document.querySelectorAll('.category-btn');
+  const rulesCards = document.querySelectorAll('.rules-card');
+
+  function filterRulesByCategory(category) {
+    rulesCards.forEach(card => {
+      if (card.getAttribute('data-rule-category') === category) {
+        card.style.display = 'block';
+      } else {
+        card.style.display = 'none';
+      }
+    });
+  }
+
+  categoryButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      categoryButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const category = btn.getAttribute('data-category');
+      filterRulesByCategory(category);
+    });
+  });
+
+  // Initialize display with the default category ('welcome')
+  filterRulesByCategory('welcome');
+
+  // Auto trigger check (auth first, then bot status)
+  bootstrap();
+});
