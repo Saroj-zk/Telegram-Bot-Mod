@@ -1569,3 +1569,56 @@ select {
   min-width: 20px;
   text-align: center;
 }
+
+/* ---- Table toolbars: search + filters above data tables ---- */
+.table-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  align-items: center;
+}
+.table-search {
+  flex: 1 1 260px;
+  min-width: 200px;
+  padding: 10px 14px !important;
+  font-size: 13px !important;
+}
+.table-filter {
+  padding: 10px 14px !important;
+  font-size: 13px !important;
+  min-width: 150px;
+}
+.panel-box-header h3 .item-badge {
+  font-size: 12px;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+/* Two-line user cells (name over id) need breathing room */
+.data-table td code.text-muted { font-size: 11px; }
+.data-table td { vertical-align: middle; }
+
+/* ---- Live terminal ---- */
+.terminal-search {
+  flex: 0 1 180px !important;
+  min-width: 140px;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+}
+.line-group {
+  color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  opacity: 0.85;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.line-time { white-space: nowrap; flex-shrink: 0; }
+
+@media (max-width: 700px) {
+  .table-toolbar { flex-direction: column; align-items: stretch; }
+  .table-search, .table-filter { width: 100%; }
+}

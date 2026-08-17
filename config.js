@@ -571,7 +571,7 @@ function getLogs() {
 }
 
 // Warnings Management
-function addWarning(userId, username, reason) {
+function addWarning(userId, username, reason, chatId, chatTitle) {
   loadData();
   if (!data.warnings[userId]) {
     data.warnings[userId] = {
@@ -580,15 +580,27 @@ function addWarning(userId, username, reason) {
       reasons: []
     };
   }
-  data.warnings[userId].count++;
-  data.warnings[userId].reasons.push({
+  const w = data.warnings[userId];
+  // Keep the display name fresh — users rename themselves.
+  if (username) w.username = username;
+  w.count++;
+  // Which group this happened in, so the dashboard can show/filter by it.
+  w.chatId = chatId || w.chatId || null;
+  w.chatTitle = chatTitle || w.chatTitle || null;
+  w.lastAt = new Date().toISOString();
+  w.firstAt = w.firstAt || w.lastAt;
+  w.reasons.push({
     reason,
-    timestamp: new Date().toISOString()
+    chatId: chatId || null,
+    chatTitle: chatTitle || null,
+    timestamp: w.lastAt
   });
+  // Don't let one persistent spammer balloon the file.
+  if (w.reasons.length > 20) w.reasons = w.reasons.slice(-20);
   incrementStat('warningsIssued');
   saveData(data);
-  const c = data.warnings[userId].count;
-  logEvent('WARNING', `⚠️ Warned @${username || userId} (${c}/3) — ${reason}`);
+  const c = w.count;
+  logEvent('WARNING', `⚠️ Warned @${username || userId} (${c}/3) — ${reason}${chatTitle ? ` in “${chatTitle}”` : ''}`);
   return c;
 }
 

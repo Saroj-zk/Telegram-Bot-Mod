@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let socket = null;
   let currentSettings = null;
   const allLogs = [];
+  let terminalPaused = false;   // Pause button holds incoming terminal lines
 
   // UI Element Selectors
   const appContainer = document.getElementById('app-container');
@@ -267,6 +268,24 @@ document.addEventListener('DOMContentLoaded', () => {
   const warningsTbody = document.getElementById('warnings-tbody');
   const bansTbody = document.getElementById('bans-tbody');
   const historyTbody = document.getElementById('history-tbody');
+
+  // Search / filter controls for the moderation tables
+  const warnSearch = document.getElementById('warn-search');
+  const warnGroupFilter = document.getElementById('warn-group-filter');
+  const warnLevelFilter = document.getElementById('warn-level-filter');
+  const warnCountBadge = document.getElementById('warn-count-badge');
+  const banSearch = document.getElementById('ban-search');
+  const banGroupFilter = document.getElementById('ban-group-filter');
+  const banStatusFilter = document.getElementById('ban-status-filter');
+  const banCountBadge = document.getElementById('ban-count-badge');
+  const historySearch = document.getElementById('history-search');
+  const historyTypeFilter = document.getElementById('history-type-filter');
+  const historyGroupFilter = document.getElementById('history-group-filter');
+  const historyLimit = document.getElementById('history-limit');
+  const historyCountBadge = document.getElementById('history-count-badge');
+  const logSearch = document.getElementById('log-search');
+  const pauseConsoleBtn = document.getElementById('pause-console-btn');
+  const pauseConsoleLabel = document.getElementById('pause-console-label');
 
   // Terminal Selectors
   const terminalConsole = document.getElementById('terminal-body-console');
@@ -1249,26 +1268,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Console Logs Processing
   function appendLogLine(log) {
+    if (terminalPaused) return;  // held while the operator is reading
+
     const line = document.createElement('div');
     line.className = `terminal-line log-level-${log.level.toLowerCase()}`;
     line.setAttribute('data-level', log.level);
 
-    const timeString = new Date(log.timestamp).toLocaleTimeString();
-    
-    line.innerHTML = `
-      <span class="line-time">[${timeString}]</span>
-      <span class="line-level level-${log.level.toLowerCase()}">${log.level}</span>
-      <span class="line-msg">${escapeHtml(log.message)}</span>
-    `;
+    const d = new Date(log.timestamp);
+    // Date matters once the log spans more than a day.
+    const dayStr = d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    const timeStr = d.toLocaleTimeString();
+    const grp = groupFromMessage(log.message);
+
+    line.innerHTML =
+      `<span class="line-time" title="${fullTime(log.timestamp)}">${dayStr} ${timeStr}</span>` +
+      `<span class="line-level level-${log.level.toLowerCase()}">${log.level}</span>` +
+      (grp ? `<span class="line-group">${escapeHtml(grp)}</span>` : '') +
+      `<span class="line-msg">${escapeHtml(grp ? cleanDetail(log.message) : log.message)}</span>`;
 
     terminalConsole.appendChild(line);
-    
-    // Auto-scroll if close to bottom
+
+    // Cap DOM size — an always-on bot would otherwise grow this unbounded.
+    while (terminalConsole.childElementCount > 500) {
+      terminalConsole.removeChild(terminalConsole.firstElementChild);
+    }
+
     const threshold = 80;
     const isAtBottom = terminalConsole.scrollHeight - terminalConsole.clientHeight - terminalConsole.scrollTop < threshold;
-    if (isAtBottom) {
-      terminalConsole.scrollTop = terminalConsole.scrollHeight;
-    }
+    if (isAtBottom) terminalConsole.scrollTop = terminalConsole.scrollHeight;
 
     applyTerminalFilters();
   }
@@ -1282,161 +1309,289 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/'/g, "&#039;");
   }
 
+  // Levels that represent an actual moderation action (vs. plumbing/INFO noise)
+  const MOD_LEVELS = new Set([
+    'BAN', 'UNBAN', 'GBAN', 'KICK', 'MUTE', 'UNMUTE', 'WARNING', 'DELETE',
+    'SPAM', 'FLOOD', 'LINK', 'FORWARD', 'MENTION', 'MEDIA', 'BUTTON', 'PREVIEW',
+    'PROFANITY', 'ZALGO', 'NAME', 'SENDERCHAT', 'PREMIUM', 'RAID', 'CAS',
+    'LOCK', 'UNLOCK', 'REPORT', 'NEWUSER', 'CONTENT'
+  ]);
+  // Levels that mean "a message was removed" — grouped under one filter option.
+  const DELETE_LEVELS = new Set([
+    'DELETE', 'LINK', 'FORWARD', 'MENTION', 'MEDIA', 'BUTTON', 'PREVIEW',
+    'PROFANITY', 'ZALGO', 'SENDERCHAT', 'PREMIUM', 'CONTENT', 'NEWUSER', 'SPAM', 'FLOOD'
+  ]);
+
+  function badgeFor(level) {
+    if (['BAN', 'GBAN', 'RAID', 'CAS', 'ERROR'].includes(level)) return 'red-bg';
+    if (['UNBAN', 'UNMUTE', 'UNLOCK'].includes(level)) return 'green-bg';
+    if (DELETE_LEVELS.has(level)) return 'purple-bg';
+    return 'yellow-bg';
+  }
+  // The group name is embedded in log text as: in "Group Name".
+  function groupFromMessage(msg) {
+    const m = msg.match(/in [“"]([^”"]+)[”"]/);
+    return m ? m[1] : null;
+  }
+  function userFromMessage(msg) {
+    const m = msg.match(/@([A-Za-z0-9_]+)/) || msg.match(/(User_\d+)/);
+    return m ? m[0] : null;
+  }
+  // Strip the leading emoji + trailing group clause so the Details column is tight.
+  function cleanDetail(msg) {
+    return msg
+      .replace(/^[^\w@(]+/, '')
+      .replace(/\s*in [“"][^”"]+[”"]\.?$/, '')
+      .trim();
+  }
+
   function updateHistoryTable() {
     if (!historyTbody) return;
-    
-    const modLevels = new Set([
-      'BAN', 'UNBAN', 'KICK', 'MUTE', 'UNMUTE', 'WARNING', 'DELETE',
-      'SPAM', 'FLOOD', 'LINK', 'FORWARD', 'MENTION', 'MEDIA', 'BUTTON', 'PREVIEW',
-      'PROFANITY', 'ZALGO', 'NAME', 'SENDERCHAT', 'PREMIUM', 'RAID', 'CAS', 'LOCK', 'UNLOCK', 'REPORT',
-      'NEWUSER', 'CONTENT', 'GBAN'
-    ]);
-    
-    const filtered = allLogs
-      .filter(log => modLevels.has(log.level))
-      .slice(-50)
-      .reverse();
-      
-    if (filtered.length === 0) {
-      historyTbody.innerHTML = `<tr><td colspan="4" class="center-text text-muted">No recent events recorded.</td></tr>`;
+
+    const q = (historySearch && historySearch.value || '').toLowerCase().trim();
+    const type = historyTypeFilter ? historyTypeFilter.value : '';
+    const grp = historyGroupFilter ? historyGroupFilter.value : '';
+    const limit = historyLimit ? parseInt(historyLimit.value, 10) || 50 : 50;
+
+    let events = allLogs.filter(l => MOD_LEVELS.has(l.level));
+
+    // Populate the group dropdown from what's actually in the log.
+    syncGroupFilter(historyGroupFilter,
+      [...new Set(events.map(e => groupFromMessage(e.message)).filter(Boolean))]);
+
+    const filtered = events.filter(l => {
+      if (type === 'DELETES') { if (!DELETE_LEVELS.has(l.level)) return false; }
+      else if (type && l.level !== type) return false;
+      if (grp && groupFromMessage(l.message) !== grp) return false;
+      if (!q) return true;
+      return (l.message + ' ' + l.level).toLowerCase().includes(q);
+    }).slice(-limit).reverse();
+
+    if (historyCountBadge) historyCountBadge.textContent = filtered.length;
+
+    if (!filtered.length) {
+      historyTbody.innerHTML = `<tr><td colspan="5" class="center-text text-muted">${events.length ? 'No events match your filters.' : 'No recent events recorded.'}</td></tr>`;
       return;
     }
-    
+
     historyTbody.innerHTML = filtered.map(log => {
-      const time = new Date(log.timestamp).toLocaleString();
-      let badgeClass = 'yellow-bg';
-      if (['BAN', 'RAID', 'CAS', 'ERROR'].includes(log.level)) badgeClass = 'red-bg';
-      if (['UNMUTE', 'UNLOCK'].includes(log.level)) badgeClass = 'green-bg';
-      if (['LINK', 'SPAM', 'PROFANITY', 'DELETE', 'FORWARD', 'MENTION', 'MEDIA', 'BUTTON', 'PREVIEW', 'ZALGO', 'NAME', 'SENDERCHAT', 'PREMIUM'].includes(log.level)) badgeClass = 'purple-bg';
-      
-      let userStr = 'System';
-      const userMatch = log.message.match(/@([a-zA-Z0-9_]+)/) || log.message.match(/(User_\d+)/);
-      if (userMatch) {
-        userStr = userMatch[0];
-      }
-      
-      return `
-        <tr>
-          <td><span class="text-muted">${time}</span></td>
-          <td><span class="item-badge ${badgeClass}">${log.level}</span></td>
-          <td><strong>${escapeHtml(userStr)}</strong></td>
-          <td>${escapeHtml(log.message)}</td>
-        </tr>
-      `;
+      const grpName = groupFromMessage(log.message);
+      const user = userFromMessage(log.message);
+      return `<tr>
+        <td><span title="${fullTime(log.timestamp)}">${relativeTime(log.timestamp)}</span></td>
+        <td><span class="item-badge ${badgeFor(log.level)}">${log.level}</span></td>
+        <td>${user ? `<strong>${escapeHtml(user)}</strong>` : '<span class="text-muted">System</span>'}</td>
+        <td>${grpName ? escapeHtml(grpName) : '<span class="text-muted">—</span>'}</td>
+        <td>${escapeHtml(cleanDetail(log.message))}</td>
+      </tr>`;
     }).join('');
   }
 
+  [historySearch, historyTypeFilter, historyGroupFilter, historyLimit].forEach(el => {
+    if (el) el.addEventListener('input', updateHistoryTable);
+    if (el) el.addEventListener('change', updateHistoryTable);
+  });
+
+  // ---- Live terminal: level filter + free-text search + pause ----
   function applyTerminalFilters() {
-    const filter = logFilterLevel.value;
-    const lines = terminalConsole.querySelectorAll('.terminal-line');
-    
-    lines.forEach(line => {
-      const level = line.getAttribute('data-level');
-      if (filter === 'ALL' || level === filter) {
-        line.style.display = 'flex';
-      } else {
-        line.style.display = 'none';
-      }
+    const level = logFilterLevel.value;
+    const q = (logSearch && logSearch.value || '').toLowerCase().trim();
+    let shown = 0;
+    terminalConsole.querySelectorAll('.terminal-line').forEach(line => {
+      const lineLevel = line.getAttribute('data-level');
+      const text = (line.textContent || '').toLowerCase();
+      const ok = (level === 'ALL' || lineLevel === level) && (!q || text.includes(q));
+      line.style.display = ok ? 'flex' : 'none';
+      if (ok) shown++;
     });
+    return shown;
   }
 
   logFilterLevel.addEventListener('change', applyTerminalFilters);
-  
+  if (logSearch) logSearch.addEventListener('input', applyTerminalFilters);
+
+  if (pauseConsoleBtn) pauseConsoleBtn.addEventListener('click', () => {
+    terminalPaused = !terminalPaused;
+    pauseConsoleLabel.textContent = terminalPaused ? 'Resume' : 'Pause';
+    pauseConsoleBtn.querySelector('i').className = terminalPaused ? 'fa-solid fa-play' : 'fa-solid fa-pause';
+    if (!terminalPaused) terminalConsole.scrollTop = terminalConsole.scrollHeight;
+    showToast(terminalPaused ? 'Terminal paused — new lines are held.' : 'Terminal resumed.', 'info');
+  });
+
   clearConsoleBtn.addEventListener('click', () => {
     terminalConsole.innerHTML = '';
-    showToast('Terminal logs cleared from screen.', 'info');
+    showToast('Terminal cleared (server logs are unaffected).', 'info');
   });
 
   // Load Moderation Database (Warnings, Bans)
+  // ---- Moderation tables: cached data + search/filter, re-rendered locally ----
+  let warningsCache = [];
+  let bansCache = [];
+
+  // "3 minutes ago" reads better than a raw timestamp when scanning a list.
+  function relativeTime(iso) {
+    if (!iso) return '—';
+    const diff = Date.now() - new Date(iso).getTime();
+    if (isNaN(diff)) return '—';
+    const m = Math.floor(diff / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    if (h < 24) return `${h}h ago`;
+    if (d < 30) return `${d}d ago`;
+    return new Date(iso).toLocaleDateString();
+  }
+  function fullTime(iso) {
+    return iso ? new Date(iso).toLocaleString() : '';
+  }
+  // Keep a group <select> populated from whatever the data actually contains.
+  function syncGroupFilter(sel, names) {
+    if (!sel) return;
+    const current = sel.value;
+    const wanted = ['', ...names];
+    if (sel.options.length - 1 !== names.length) {
+      sel.innerHTML = '<option value="">All groups</option>' +
+        names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+      if (wanted.includes(current)) sel.value = current;
+    }
+  }
+
+  function renderWarnings() {
+    if (!warningsTbody) return;
+    const q = (warnSearch && warnSearch.value || '').toLowerCase().trim();
+    const grp = warnGroupFilter ? warnGroupFilter.value : '';
+    const lvl = warnLevelFilter ? warnLevelFilter.value : '';
+
+    const rows = warningsCache.filter(w => {
+      if (grp && (w.chatTitle || '') !== grp) return false;
+      if (lvl && String(w.count) !== lvl) return false;
+      if (!q) return true;
+      return [w.username, w.userId, w.chatTitle, w.lastReason]
+        .filter(Boolean).join(' ').toLowerCase().includes(q);
+    });
+
+    if (warnCountBadge) warnCountBadge.textContent = rows.length;
+    if (!rows.length) {
+      warningsTbody.innerHTML = `<tr><td colspan="6" class="center-text text-muted">${warningsCache.length ? 'No warnings match your filters.' : 'No warnings issued yet.'}</td></tr>`;
+      return;
+    }
+
+    warningsTbody.innerHTML = rows.map(w => {
+      const uname = w.username && !String(w.username).startsWith('User_') ? '@' + w.username : `User ${w.userId}`;
+      const sev = w.count >= 2 ? 'red-bg' : 'yellow-bg';
+      return `<tr>
+        <td><strong>${escapeHtml(uname)}</strong><br><code class="text-muted">${w.userId}</code></td>
+        <td>${w.chatTitle ? escapeHtml(w.chatTitle) : '<span class="text-muted">—</span>'}</td>
+        <td><span class="item-badge ${sev}">${w.count}/3</span></td>
+        <td>${escapeHtml(w.lastReason || '—')}</td>
+        <td><span title="${fullTime(w.lastAt)}">${relativeTime(w.lastAt)}</span></td>
+        <td>
+          <button class="btn btn-secondary btn-small clear-warns-btn" data-id="${w.userId}" title="Reset this user's warnings to 0">
+            <i class="fa-solid fa-rotate-left"></i> Reset
+          </button>
+          <button class="btn btn-danger btn-small warn-ban-btn" data-id="${w.userId}" data-chat="${w.chatId || ''}" title="Ban this user now">
+            <i class="fa-solid fa-gavel"></i> Ban
+          </button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    document.querySelectorAll('.clear-warns-btn').forEach(b =>
+      b.addEventListener('click', () => triggerClearWarnings(b.dataset.id)));
+    document.querySelectorAll('.warn-ban-btn').forEach(b =>
+      b.addEventListener('click', () => {
+        if (confirm('Ban this user from the group?')) triggerBanUser(b.dataset.id, b.dataset.chat);
+      }));
+  }
+
+  function renderBans() {
+    if (!bansTbody) return;
+    const q = (banSearch && banSearch.value || '').toLowerCase().trim();
+    const grp = banGroupFilter ? banGroupFilter.value : '';
+    const status = banStatusFilter ? banStatusFilter.value : 'active';
+
+    const rows = bansCache.filter(b => {
+      if (status === 'active' && !b.active) return false;
+      if (status === 'unbanned' && b.active) return false;
+      if (grp && (b.chatTitle || '') !== grp) return false;
+      if (!q) return true;
+      return [b.username, b.userId, b.chatTitle, b.reason]
+        .filter(Boolean).join(' ').toLowerCase().includes(q);
+    });
+
+    if (banCountBadge) banCountBadge.textContent = rows.length;
+    if (!rows.length) {
+      bansTbody.innerHTML = `<tr><td colspan="6" class="center-text text-muted">${bansCache.length ? 'No bans match your filters.' : 'No bans recorded.'}</td></tr>`;
+      return;
+    }
+
+    bansTbody.innerHTML = rows.map(b => {
+      const uname = b.username && !String(b.username).startsWith('User_') ? '@' + b.username : `User ${b.userId}`;
+      const status = b.active
+        ? '<span class="item-badge red-bg">Banned</span>'
+        : '<span class="item-badge yellow-bg">Unbanned</span>';
+      const action = b.active
+        ? `<button class="btn btn-secondary btn-small unban-btn" data-id="${b.userId}" data-chat="${b.chatId || ''}">
+             <i class="fa-solid fa-unlock"></i> Unban</button>`
+        : `<span class="text-muted">—</span>`;
+      return `<tr>
+        <td><strong>${escapeHtml(uname)}</strong><br><code class="text-muted">${b.userId}</code></td>
+        <td>${b.chatTitle ? escapeHtml(b.chatTitle) : '<span class="text-muted">—</span>'}</td>
+        <td><span title="${fullTime(b.bannedAt)}">${relativeTime(b.bannedAt)}</span></td>
+        <td>${escapeHtml(b.reason || '—')}</td>
+        <td>${status}</td>
+        <td>${action}</td>
+      </tr>`;
+    }).join('');
+
+    document.querySelectorAll('.unban-btn').forEach(btn =>
+      btn.addEventListener('click', () => {
+        const chatId = btn.dataset.chat ? Number(btn.dataset.chat) : null;
+        triggerUnban(btn.dataset.id, chatId);
+      }));
+  }
+
+  async function triggerBanUser(userId, chatId) {
+    try {
+      const r = await api('/api/action/ban', { method: 'POST', body: { userId, chatId: chatId || undefined } });
+      const j = await r.json();
+      if (j.success) { showToast(j.message || 'User banned.', 'success'); loadModData(); }
+      else showToast(j.error || 'Ban failed.', 'error');
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('Network error.', 'error');
+    }
+  }
+
   async function loadModData() {
     try {
       const response = await api('/api/data');
       const data = await response.json();
-      
-      // Update stats counters
-      statBans.textContent = data.bans.length;
-      statMutes.textContent = data.mutes.length;
 
-      // Populate Warnings Table
-      warningsTbody.innerHTML = '';
-      const warningIds = Object.keys(data.warnings);
-      
-      if (warningIds.length === 0) {
-        warningsTbody.innerHTML = `<tr><td colspan="5" class="center-text text-muted">No warnings issued yet.</td></tr>`;
-      } else {
-        warningIds.forEach(id => {
-          const userObj = data.warnings[id];
-          const tr = document.createElement('tr');
-          const lastReason = userObj.reasons[userObj.reasons.length - 1];
-          const reasonText = lastReason ? lastReason.reason : 'No reason';
-          
-          tr.innerHTML = `
-            <td><code>${id}</code></td>
-            <td><strong>@${userObj.username || id}</strong></td>
-            <td><span class="item-badge ${userObj.count >= 2 ? 'red-bg' : 'yellow-bg'}">${userObj.count}/3</span></td>
-            <td>${reasonText}</td>
-            <td>
-              <button class="btn btn-secondary btn-small clear-warns-btn" data-id="${id}">
-                <i class="fa-solid fa-rotate-left"></i> Reset Warns
-              </button>
-            </td>
-          `;
-          warningsTbody.appendChild(tr);
-        });
+      statBans.textContent = (data.bans || []).filter(b => b.active !== false).length;
+      statMutes.textContent = (data.mutes || []).length;
 
-        // Add action listener to clear warning buttons
-        document.querySelectorAll('.clear-warns-btn').forEach(btn => {
-          btn.addEventListener('click', async () => {
-            const userId = btn.getAttribute('data-id');
-            await triggerClearWarnings(userId);
-          });
-        });
-      }
+      warningsCache = data.warningsList || [];
+      bansCache = data.bans || [];
 
-      // Populate Bans Table
-      bansTbody.innerHTML = '';
-      if (data.bans.length === 0) {
-        bansTbody.innerHTML = `<tr><td colspan="6" class="center-text text-muted">No bans recorded.</td></tr>`;
-      } else {
-        data.bans.forEach(ban => {
-          const tr = document.createElement('tr');
-          const banTime = new Date(ban.bannedAt).toLocaleString();
-          const isActive = ban.active !== false;
-          const statusBadge = isActive
-            ? `<span class="item-badge red-bg">Banned</span>`
-            : `<span class="item-badge yellow-bg">Unbanned</span>`;
-          const actionCell = isActive
-            ? `<button class="btn btn-secondary btn-small unban-btn" data-id="${ban.userId}" data-chat="${ban.chatId || ''}">
-                 <i class="fa-solid fa-unlock"></i> Unban
-               </button>`
-            : `<button class="btn btn-outline btn-small purge-ban-btn" data-id="${ban.userId}" title="Remove from log">
-                 <i class="fa-solid fa-trash"></i>
-               </button>`;
-          tr.innerHTML = `
-            <td><code>${ban.userId}</code></td>
-            <td><strong>@${ban.username}</strong></td>
-            <td>${banTime}</td>
-            <td>${ban.reason}</td>
-            <td>${statusBadge}</td>
-            <td>${actionCell}</td>
-          `;
-          bansTbody.appendChild(tr);
-        });
+      // Group dropdowns reflect the groups actually present in the data.
+      syncGroupFilter(warnGroupFilter, [...new Set(warningsCache.map(w => w.chatTitle).filter(Boolean))]);
+      syncGroupFilter(banGroupFilter, [...new Set(bansCache.map(b => b.chatTitle).filter(Boolean))]);
 
-        document.querySelectorAll('.unban-btn').forEach(btn => {
-          btn.addEventListener('click', async () => {
-            const userId = btn.getAttribute('data-id');
-            const chatIdRaw = btn.getAttribute('data-chat');
-            const chatId = chatIdRaw ? Number(chatIdRaw) : null;
-            await triggerUnban(userId, chatId);
-          });
-        });
-      }
-
+      renderWarnings();
+      renderBans();
     } catch (err) {
       if (err.message !== 'unauthorized') showToast('Error reading moderation databases.', 'error');
     }
   }
+
+  // Live search/filter — re-render from cache, no server round-trip.
+  [warnSearch, warnGroupFilter, warnLevelFilter].forEach(el => {
+    if (el) el.addEventListener('input', renderWarnings);
+    if (el) el.addEventListener('change', renderWarnings);
+  });
+  [banSearch, banGroupFilter, banStatusFilter].forEach(el => {
+    if (el) el.addEventListener('input', renderBans);
+    if (el) el.addEventListener('change', renderBans);
+  });
 
   async function triggerUnban(userId, chatId) {
     try {

@@ -396,7 +396,7 @@ async function applyAction(ctx, opts) {
 
   if (action === 'delete_and_warn' || action === 'warn') {
     config.logEvent(level, `🗑️ Removed ${cat} from ${display} in “${chatTitle}”.`);
-    const count = config.addWarning(userId, username, warnReason || reason);
+    const count = config.addWarning(userId, username, warnReason || reason, ctx.chat.id, chatTitle);
     if (!silent) {
       try {
         const sent = await ctx.reply(`⚠️ ${display}, ${warnReason || reason}. Warning ${count}/3.`);
@@ -2101,7 +2101,7 @@ function initBot(token, opts = {}) {
       if (!target) return;
       const parts = (ctx.message.text || '').split(/\s+/);
       const reason = parts.slice(2).join(' ') || 'Violating chat rules';
-      const warningsCount = config.addWarning(target.id, target.username, reason);
+      const warningsCount = config.addWarning(target.id, target.username, reason, ctx.chat.id, ctx.chat.title);
       actionReply(ctx, `⚠️ ${target.username} has been warned! Warning: ${warningsCount}/3.\nReason: ${reason}`);
       if (warningsCount >= 3) {
         try {
@@ -3134,12 +3134,51 @@ async function refreshChats() {
   return { ok: true, results };
 }
 
+// Ban a user from the dashboard. If no chat is given, ban them everywhere the
+// bot knows about (a warned spammer is rarely a problem in only one group).
+async function banUserFromDashboard(userId, chatId) {
+  const tg = anyBot();
+  if (!tg) return { ok: false, error: 'bot_not_running' };
+  const uid = Number(userId);
+  if (!uid || isNaN(uid)) return { ok: false, error: 'invalid_user_id' };
+
+  const targets = chatId ? [String(chatId)] : Object.keys(config.getKnownChats());
+  if (!targets.length) return { ok: false, error: 'no_known_chats' };
+
+  let ok = 0;
+  const errors = [];
+  for (const cid of targets) {
+    try {
+      await banMember(tg.telegram, cid, uid);
+      config.recordChat(cid, null, {});
+      ok++;
+    } catch (e) {
+      errors.push((e && e.message) || 'error');
+    }
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  if (!ok) {
+    const why = /CHAT_ADMIN_REQUIRED|not enough rights/i.test(errors.join(' '))
+      ? 'the bot is not an admin there (needs "Ban Users")'
+      : errors[0] || 'unknown error';
+    return { ok: false, error: `Could not ban: ${why}` };
+  }
+
+  const chats = config.getKnownChats();
+  const title = chatId ? ((chats[String(chatId)] || {}).title || chatId) : `${ok} group(s)`;
+  config.addBan(uid, null, 'Banned from dashboard', chatId || null);
+  config.clearWarnings(uid);
+  return { ok: true, message: `Banned in ${title}.` };
+}
+
 module.exports = {
   initBot,
   stopBot,
   getBotStatus,
   listBots,
   unbanUser,
+  banUserFromDashboard,
   runRoutineScan,
   registerScanProgress,
   refreshChats

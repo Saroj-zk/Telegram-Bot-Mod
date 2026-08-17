@@ -365,10 +365,42 @@ app.post('/api/settings', requireAuth, (req, res) => {
 
 app.get('/api/data', requireAuth, (req, res) => {
   const currentData = config.loadData();
+  const chats = config.getKnownChats();
+  const chatName = (id) => {
+    if (!id) return null;
+    const c = chats[String(id)];
+    return (c && c.title) || null;
+  };
+
+  // Flatten warnings into a sorted array so the dashboard doesn't have to.
+  // One row per user (they're already keyed by user id), newest offence first.
+  const warningsList = Object.entries(currentData.warnings || {}).map(([userId, w]) => {
+    const last = (w.reasons && w.reasons.length) ? w.reasons[w.reasons.length - 1] : null;
+    return {
+      userId,
+      username: w.username || `User_${userId}`,
+      count: w.count || 0,
+      chatId: w.chatId || (last && last.chatId) || null,
+      chatTitle: w.chatTitle || (last && last.chatTitle) || chatName(w.chatId),
+      lastReason: last ? last.reason : null,
+      lastAt: w.lastAt || (last && last.timestamp) || null,
+      firstAt: w.firstAt || null,
+      history: (w.reasons || []).slice(-10).reverse()
+    };
+  }).sort((a, b) => new Date(b.lastAt || 0) - new Date(a.lastAt || 0));
+
+  // Newest ban first, with the group name resolved.
+  const bansList = (currentData.bans || []).map(b => ({
+    ...b,
+    chatTitle: b.chatTitle || chatName(b.chatId),
+    active: b.active !== false
+  })).sort((a, b) => new Date(b.bannedAt || 0) - new Date(a.bannedAt || 0));
+
   res.json({
     stats: currentData.stats,
-    warnings: currentData.warnings,
-    bans: currentData.bans,
+    warnings: currentData.warnings,   // kept for backwards compatibility
+    warningsList,
+    bans: bansList,
     mutes: currentData.mutes
   });
 });
@@ -483,6 +515,21 @@ app.delete('/api/chats/:id', requireAuth, (req, res) => {
 
 app.get('/api/scans', requireAuth, (req, res) => {
   res.json(config.getScanHistory());
+});
+
+// Ban straight from the dashboard (used by the Ban button on a warned user).
+app.post('/api/action/ban', requireAuth, async (req, res) => {
+  const userId = parseInt(req.body && req.body.userId, 10);
+  const chatId = req.body && req.body.chatId ? String(req.body.chatId) : null;
+  if (!userId || isNaN(userId)) return res.status(400).json({ success: false, error: 'invalid_user_id' });
+  try {
+    const r = await bot.banUserFromDashboard(userId, chatId);
+    if (!r.ok) return res.status(400).json({ success: false, error: r.error });
+    io.emit('data_update');
+    res.json({ success: true, message: r.message });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 app.post('/api/action/unban', requireAuth, async (req, res) => {
