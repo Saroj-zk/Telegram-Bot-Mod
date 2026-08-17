@@ -297,6 +297,7 @@ app.get('/api/bots', requireAuth, (req, res) => {
       username: l ? l.username : null,
       first_name: l ? l.first_name : null,
       addedAt: s.addedAt,
+      canReadAllMessages: l ? l.canReadAllMessages : null,
       online: !!l
     };
   }));
@@ -417,6 +418,67 @@ app.post('/api/action/routine-scan', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// -------- Groups the bot is in (+ per-group rule overrides) --------
+app.get('/api/chats', requireAuth, (req, res) => {
+  const chats = config.getKnownChats();
+  const list = Object.entries(chats).map(([id, c]) => ({
+    id,
+    title: c.title || null,
+    type: c.type || null,
+    memberCount: c.memberCount !== undefined ? c.memberCount : null,
+    botIsAdmin: c.botIsAdmin === undefined ? null : !!c.botIsAdmin,
+    canDelete: c.canDelete === undefined ? null : !!c.canDelete,
+    canBan: c.canBan === undefined ? null : !!c.canBan,
+    messagesSeen: c.messagesSeen || 0,
+    actionsTaken: c.actionsTaken || 0,
+    firstSeen: c.firstSeen || null,
+    lastSeen: c.lastSeen || null,
+    overrides: c.overrides || {},
+    hasOverrides: !!(c.overrides && Object.keys(c.overrides).length)
+  })).sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  res.json({ count: list.length, chats: list });
+});
+
+// Pull fresh titles / member counts from Telegram, and prune dead groups.
+app.post('/api/chats/refresh', requireAuth, async (req, res) => {
+  try {
+    const r = await bot.refreshChats();
+    if (!r.ok) return res.status(400).json({ success: false, error: r.error });
+    io.emit('data_update');
+    res.json({ success: true, results: r.results });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/chats/:id/overrides', requireAuth, (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^-?\d+$/.test(id)) return res.status(400).json({ success: false, error: 'invalid_chat_id' });
+  try {
+    const saved = config.setChatOverrides(id, req.body && req.body.overrides);
+    io.emit('data_update');
+    res.json({ success: true, overrides: saved });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/chats/:id/overrides', requireAuth, (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^-?\d+$/.test(id)) return res.status(400).json({ success: false, error: 'invalid_chat_id' });
+  const ok = config.clearChatOverrides(id);
+  io.emit('data_update');
+  res.json({ success: ok });
+});
+
+app.delete('/api/chats/:id', requireAuth, (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^-?\d+$/.test(id)) return res.status(400).json({ success: false, error: 'invalid_chat_id' });
+  const ok = config.removeChat(id);
+  io.emit('data_update');
+  res.json({ success: ok });
 });
 
 app.get('/api/scans', requireAuth, (req, res) => {

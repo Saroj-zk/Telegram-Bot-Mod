@@ -10,7 +10,9 @@ const LOGS_PATH = path.join(DB_DIR, 'logs.json');
 const SESSIONS_PATH = path.join(DB_DIR, 'sessions.json');
 const MESSAGE_CACHE_PATH = path.join(DB_DIR, 'messages.json');
 const SCAN_HISTORY_PATH = path.join(DB_DIR, 'scans.json');
+const HEARTBEAT_PATH = path.join(DB_DIR, 'heartbeat.json');
 const BOTS_PATH = path.join(DB_DIR, 'bots.json');
+const CHATS_PATH = path.join(DB_DIR, 'chats.json');
 
 // Ensure db directory exists
 if (!fs.existsSync(DB_DIR)) {
@@ -69,7 +71,19 @@ const NSFW_KEYWORDS = [
 const SCAM_KEYWORDS = [
   "crypto scam", "free money", "free crypto", "airdrop free", "earn $", "easy money",
   "investment opportunity", "double your money", "guaranteed profit", "join my group",
-  "join our channel", "promote channel", "channel promotion", "buy followers"
+  "join our channel", "promote channel", "channel promotion", "buy followers",
+  // Casino / betting / "bonus" spam. Matching runs on the NFKC-normalized text,
+  // so stylized Unicode ("𝗕𝗢𝗡𝗨𝗦", "８０$") is folded to plain ASCII first.
+  // Multi-word / brand phrases only — single generic words like "casino",
+  // "betting" or "play now" caused false positives in ordinary chat.
+  "bonus ready", "no kyc", "instant payout", "instant payouts", "join play withdraw",
+  "promo code", "bonus code", "free spins", "freespins", "free bet", "freebet",
+  "deposit bonus", "welcome bonus", "sign up bonus", "signup bonus", "no deposit bonus",
+  "slots bot", "slot bot", "bet now", "claim bonus", "claim your bonus",
+  "withdraw instantly", "instant withdrawal", "guaranteed win", "sure win",
+  "online casino", "casino bonus", "betting site", "betting bot", "gambling site",
+  "1xbet", "bcgame", "bc game", "stake com", "melbet", "parimatch", "mostbet",
+  "betwinner", "linebet", "pin up casino", "1win", "22bet"
 ];
 
 const DEFAULT_SETTINGS = {
@@ -94,8 +108,9 @@ const DEFAULT_SETTINGS = {
   },
   antiLink: {
     enabled: true,
-    allowAdmins: false,        // legacy flag, superseded by enforceOnAdmins
-    enforceOnAdmins: true,     // admins are NOT exempt from link checks
+    // Admins are trusted to post links (announcements, official URLs), so they
+    // are exempt by default. Flip this on only if you don't trust your admins.
+    enforceOnAdmins: false,
     strictMode: true,          // catch bare domains, shorteners, all schemes
     action: "delete_and_warn", // delete, warn, delete_and_warn, ban
     whitelistDomains: []       // exact hostname or *.example.com matches never blocked
@@ -139,7 +154,7 @@ const DEFAULT_SETTINGS = {
   },
   antiPreview: {
     enabled: true,
-    enforceOnAdmins: true,
+    enforceOnAdmins: false,      // admins share previewed links legitimately
     action: "delete_and_warn",
     blockWebPreviews: true       // any message that resolves a link preview thumbnail
   },
@@ -173,7 +188,21 @@ const DEFAULT_SETTINGS = {
     action: "ban"
   },
   antiSenderChat: {
-    enabled: true, // users posting as channels in the group
+    enabled: true,              // channels / "send as channel" posting into the group
+    banChannel: true,           // banChatSenderChat so that channel can never post again
+    allowLinkedChannel: true,   // don't touch auto-forwards from the group's own linked channel
+    action: "delete"            // channel gets banned anyway; warning a channel is meaningless
+  },
+  languageFilter: {
+    // Per-group overridable: a Korean or Chinese community should turn the
+    // matching script OFF for that group via the Groups panel.
+    enabled: true,
+    blockCJK: true,             // Han + kana. Chinese/Japanese payment spam is rampant in crypto groups
+    blockKorean: false,         // Hangul — off by default so Korean groups work out of the box
+    blockCyrillic: false,       // careful: overlaps with confusable-glyph usage
+    blockArabic: false,
+    blockThai: false,
+    minChars: 2,                // N+ chars of a blocked script → delete
     action: "delete_and_warn"
   },
   antiZalgo: {
@@ -208,7 +237,7 @@ const DEFAULT_SETTINGS = {
   },
   antiPremiumEmoji: {
     enabled: true,
-    enforceOnAdmins: true,        // nudity-vector — even admins shouldn't post these
+    enforceOnAdmins: false,       // admins legitimately use premium/custom emoji
     blockAllCustomEmoji: true,    // any premium custom_emoji entity → block (recommended)
     blockVideoStickers: true,     // is_video stickers (WebM) — overwhelmingly NSFW packs
     blockAnimatedStickers: false, // is_animated (TGS) — many free packs are fine, off by default
@@ -237,13 +266,13 @@ const DEFAULT_SETTINGS = {
   },
   contentTypes: {
     enabled: true,
-    enforceOnAdmins: true,
+    enforceOnAdmins: false,       // admins post polls / media legitimately
     blockPaidMedia: true,         // Telegram Stars paid media — primary porn-sale vector
     blockSpoilerMedia: false,     // photos/videos hidden behind tap-to-reveal spoiler
     scanPolls: true,              // poll question + options run through the blacklist
     blockPolls: false,            // blanket-delete all polls
     blockGames: true,             // game messages (HTML5 games, often spam)
-    blockContacts: false,         // shared contact cards
+    blockContacts: true,          // shared contact cards — near-universally spam in groups
     blockLocations: false,        // location/venue shares
     maxMessageLength: 0,          // 0 = off; otherwise delete walls of text above N chars
     blockRepeatedChars: true,     // "aaaaaaaa…" 15+ same char in a row
@@ -267,6 +296,8 @@ const DEFAULT_DATA = {
     casHits: 0,
     namesBlocked: 0,
     senderChatBlocked: 0,
+    channelsBanned: 0,
+    languageBlocked: 0,
     zalgoBlocked: 0,
     adultEmojiBlocked: 0,
     premiumEmojiBlocked: 0,
@@ -300,15 +331,83 @@ function mergeWithDefaults(stored) {
   return merged;
 }
 
+// Bump when a saved setting must be corrected on existing installs. Stored
+// values normally win over defaults, so changing a default alone is not enough.
+const SETTINGS_SCHEMA_VERSION = 5;
+
+// v3 briefly shipped these as blacklist entries. They are ordinary English words
+// that fire on innocent chat ("lets play now a game"), so v4 removes them again.
+const FALSE_POSITIVE_KEYWORDS = [
+  'casino', 'betting', 'gamble', 'gambling', 'jackpot', 'roulette', 'blackjack',
+  'sportsbook', 'wager', 'cashout', 'cash out now', 'play now', 'use code', 'no deposit'
+];
+
+// v2: earlier builds shipped enforceOnAdmins=true on link/preview/media rules,
+// which deleted (and tried to ban for) links posted by group admins. Admins are
+// trusted for those; only the NSFW text/emoji rules still apply to them.
+function migrateSettings(s) {
+  if (!s || s._schemaVersion >= SETTINGS_SCHEMA_VERSION) return { settings: s, changed: false };
+  let changed = false;
+  for (const section of ['antiLink', 'antiPreview', 'antiPremiumEmoji', 'contentTypes']) {
+    if (s[section] && s[section].enforceOnAdmins === true) {
+      s[section].enforceOnAdmins = false;
+      changed = true;
+    }
+  }
+  // Drop the dead flag that contradicted enforceOnAdmins in the UI.
+  if (s.antiLink && 'allowAdmins' in s.antiLink) { delete s.antiLink.allowAdmins; changed = true; }
+
+  // v3: fold any newly-shipped blacklist keywords into the saved list. Additive
+  // only — words the operator added by hand are preserved, and words they
+  // deliberately deleted stay deleted for everything except this new batch.
+  if (s.profanity && Array.isArray(s.profanity.blacklist)) {
+    // Prune the over-broad words v3 introduced before re-merging.
+    const bad = new Set(FALSE_POSITIVE_KEYWORDS);
+    const before = s.profanity.blacklist.length;
+    s.profanity.blacklist = s.profanity.blacklist.filter(w => !bad.has(String(w).toLowerCase()));
+    if (s.profanity.blacklist.length !== before) {
+      changed = true;
+      logEvent('INFO', `⚙️ Removed ${before - s.profanity.blacklist.length} over-broad keyword(s) that flagged normal chat.`);
+    }
+
+    const have = new Set(s.profanity.blacklist.map(w => String(w).toLowerCase()));
+    const added = DEFAULT_SETTINGS.profanity.blacklist.filter(w => !have.has(String(w).toLowerCase()));
+    if (added.length) {
+      s.profanity.blacklist = s.profanity.blacklist.concat(added);
+      changed = true;
+      logEvent('INFO', `⚙️ Added ${added.length} new spam keyword(s) to the filter (casino/betting spam).`);
+    }
+  }
+
+  // v5: shared contact cards ("MESSAGE / ADD" cards carrying a phone number and
+  // an advert in the contact's name) are a standing spam vector — block by default.
+  if (s.contentTypes && s.contentTypes.blockContacts === false) {
+    s.contentTypes.blockContacts = true;
+    changed = true;
+    logEvent('INFO', '⚙️ Shared contact cards are now blocked (common phone/WeChat spam vector).');
+  }
+
+  s._schemaVersion = SETTINGS_SCHEMA_VERSION;
+  return { settings: s, changed: true };
+}
+
 // Load settings
 function loadSettings() {
   try {
     if (fs.existsSync(SETTINGS_PATH)) {
       const fileContent = fs.readFileSync(SETTINGS_PATH, 'utf8');
       const stored = JSON.parse(fileContent);
-      settings = mergeWithDefaults(stored);
+      const { settings: migrated, changed } = migrateSettings(stored);
+      settings = mergeWithDefaults(migrated);
+      settings._schemaVersion = SETTINGS_SCHEMA_VERSION;
+      if (changed) {
+        try {
+          fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2), 'utf8');
+          logEvent('INFO', '⚙️ Settings updated: group admins are no longer blocked from posting links, previews, polls or custom emoji.');
+        } catch (e) {}
+      }
     } else {
-      settings = { ...DEFAULT_SETTINGS };
+      settings = { ...DEFAULT_SETTINGS, _schemaVersion: SETTINGS_SCHEMA_VERSION };
       saveSettings(settings);
     }
   } catch (err) {
@@ -340,7 +439,7 @@ function loadData() {
       data.warnings = data.warnings || {};
       data.bans = data.bans || [];
       data.mutes = data.mutes || [];
-      data.chats = data.chats || {};
+      // NOTE: the chat registry moved to db/chats.json — see loadChatRegistry().
     } else {
       saveData(DEFAULT_DATA);
     }
@@ -558,23 +657,180 @@ function addMute(userId, username, durationMinutes, reason) {
   logEvent('MUTE', `🔇 Muted @${username || userId} for ${durationMinutes || 'indefinite'} min — ${reason}`);
 }
 
-// -------- Known-chats registry (for /gban cross-chat enforcement) --------
-// Debounced — recordChat fires on every cached message, so don't write each time.
+// -------- Uptime heartbeat --------
+// Telegram only queues ~24h of updates while a bot is offline, and caps the
+// queue. Past that window, messages posted during downtime are gone for good —
+// no bot can retrieve them. We record a heartbeat so the operator gets told
+// exactly how long the blind spot was instead of silently missing spam.
+const HEARTBEAT_INTERVAL_MS = 60 * 1000;
+let heartbeatTimer = null;
+
+function writeHeartbeat() {
+  try { fs.writeFileSync(HEARTBEAT_PATH, JSON.stringify({ lastAlive: Date.now() })); } catch (e) {}
+}
+function readLastAlive() {
+  try {
+    if (!fs.existsSync(HEARTBEAT_PATH)) return null;
+    const j = JSON.parse(fs.readFileSync(HEARTBEAT_PATH, 'utf8'));
+    return j && j.lastAlive ? j.lastAlive : null;
+  } catch (e) { return null; }
+}
+function startHeartbeat() {
+  if (heartbeatTimer) return;
+  writeHeartbeat();
+  heartbeatTimer = setInterval(writeHeartbeat, HEARTBEAT_INTERVAL_MS);
+  if (heartbeatTimer.unref) heartbeatTimer.unref();
+}
+// Returns { downMs, downText, beyondBacklog } describing the gap since last run.
+function getDowntime() {
+  const last = readLastAlive();
+  if (!last) return null;
+  const downMs = Date.now() - last;
+  if (downMs < 5 * 60 * 1000) return null; // normal restart, not worth reporting
+  const h = Math.floor(downMs / 3600000);
+  const m = Math.floor((downMs % 3600000) / 60000);
+  return {
+    downMs,
+    downText: h ? `${h}h ${m}m` : `${m}m`,
+    beyondBacklog: downMs > 24 * 3600 * 1000
+  };
+}
+
+// -------- Known-chats registry (own file: db/chats.json) --------
+// Tracks every group the bot is in: used for /gban, the dashboard Groups panel,
+// and per-group rule overrides.
+//
+// This deliberately lives OUTSIDE db.json. It used to be `data.chats`, but any
+// loadData() call (from addBan, incrementStat, a dashboard read…) reloads `data`
+// from disk and silently discarded chat records that were still waiting on the
+// debounced write — groups would appear, then vanish. Its own file + its own
+// in-memory object removes that race entirely.
+let chatRegistry = {};
 let chatRegistryDirty = false;
-function recordChat(chatId, title) {
-  if (!chatId) return;
-  if (!data.chats) data.chats = {};
-  const key = String(chatId);
-  const prev = data.chats[key];
-  data.chats[key] = { title: title || (prev && prev.title) || null, lastSeen: Date.now() };
-  if (!chatRegistryDirty) {
-    chatRegistryDirty = true;
-    setTimeout(() => { chatRegistryDirty = false; saveData(data); }, 5000);
+
+function loadChatRegistry() {
+  try {
+    if (fs.existsSync(CHATS_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(CHATS_PATH, 'utf8'));
+      if (parsed && typeof parsed === 'object') chatRegistry = parsed;
+    }
+  } catch (e) {
+    console.error('Error loading chats.json:', e.message);
+  }
+  // One-time migration from the old data.chats location.
+  try {
+    if (data && data.chats && Object.keys(data.chats).length) {
+      for (const [id, rec] of Object.entries(data.chats)) {
+        if (!chatRegistry[id]) chatRegistry[id] = rec;
+      }
+      delete data.chats;
+      saveData(data);
+      flushChatRegistry();
+      logEvent('INFO', `Migrated ${Object.keys(chatRegistry).length} group record(s) to db/chats.json`);
+    }
+  } catch (e) {}
+  return chatRegistry;
+}
+
+function flushChatRegistry() {
+  try {
+    fs.writeFileSync(CHATS_PATH, JSON.stringify(chatRegistry, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Error saving chats.json:', e.message);
   }
 }
+function scheduleChatFlush() {
+  if (chatRegistryDirty) return;
+  chatRegistryDirty = true;
+  setTimeout(() => { chatRegistryDirty = false; flushChatRegistry(); }, 3000);
+}
+
+function recordChat(chatId, title, meta = {}) {
+  if (!chatId) return;
+  const key = String(chatId);
+  const prev = chatRegistry[key] || {};
+  const isNew = !chatRegistry[key];
+  chatRegistry[key] = {
+    ...prev,                                   // keep overrides + counters
+    title: title || prev.title || null,
+    type: meta.type || prev.type || null,
+    memberCount: meta.memberCount !== undefined ? meta.memberCount : prev.memberCount,
+    // Permission snapshot — the dashboard warns when the bot can't actually act.
+    botIsAdmin: meta.botIsAdmin !== undefined ? meta.botIsAdmin : prev.botIsAdmin,
+    canDelete: meta.canDelete !== undefined ? meta.canDelete : prev.canDelete,
+    canBan: meta.canBan !== undefined ? meta.canBan : prev.canBan,
+    firstSeen: prev.firstSeen || Date.now(),
+    lastSeen: Date.now(),
+    messagesSeen: (prev.messagesSeen || 0) + (meta.countMessage ? 1 : 0),
+    actionsTaken: prev.actionsTaken || 0
+  };
+  // A brand-new group is worth writing immediately so a crash can't lose it.
+  if (isNew) flushChatRegistry();
+  else scheduleChatFlush();
+}
 function getKnownChats() {
-  loadData();
-  return data.chats || {};
+  return chatRegistry;
+}
+function removeChat(chatId) {
+  const key = String(chatId);
+  if (!chatRegistry[key]) return false;
+  delete chatRegistry[key];
+  flushChatRegistry();
+  return true;
+}
+// Count a moderation action against a group (dashboard "actions" column).
+function bumpChatAction(chatId) {
+  if (!chatId) return;
+  const rec = chatRegistry[String(chatId)];
+  if (!rec) return;
+  rec.actionsTaken = (rec.actionsTaken || 0) + 1;
+  scheduleChatFlush();
+}
+
+// -------- Per-group rule overrides --------
+// A Korean or Chinese-speaking group needs different language rules than an
+// English one. Overrides are a partial settings object stored per chat and
+// merged over the global settings at moderation time.
+function setChatOverrides(chatId, overrides) {
+  const key = String(chatId);
+  if (!chatRegistry[key]) {
+    chatRegistry[key] = { title: null, firstSeen: Date.now(), lastSeen: Date.now() };
+  }
+  const clean = {};
+  if (overrides && typeof overrides === 'object') {
+    // Only allow keys that exist in the real settings schema.
+    for (const section of Object.keys(DEFAULT_SETTINGS)) {
+      if (overrides[section] && typeof overrides[section] === 'object') {
+        clean[section] = { ...overrides[section] };
+      }
+    }
+  }
+  chatRegistry[key].overrides = clean;
+  flushChatRegistry();
+  logEvent('INFO', `⚙️ Per-group settings updated for “${chatRegistry[key].title || key}”.`);
+  return clean;
+}
+function clearChatOverrides(chatId) {
+  const rec = chatRegistry[String(chatId)];
+  if (!rec) return false;
+  delete rec.overrides;
+  flushChatRegistry();
+  return true;
+}
+// Global settings with this chat's overrides applied on top.
+function getSettingsForChat(chatId) {
+  const base = loadSettings();
+  if (!chatId) return base;
+  const rec = chatRegistry[String(chatId)];
+  const ov = rec && rec.overrides;
+  if (!ov || Object.keys(ov).length === 0) return base;
+  const merged = { ...base };
+  for (const section of Object.keys(ov)) {
+    if (base[section] && typeof base[section] === 'object') {
+      merged[section] = { ...base[section], ...ov[section] };
+    }
+  }
+  return merged;
 }
 
 // -------- Admin account + session helpers ---------
@@ -876,6 +1132,7 @@ function sanitizeSettings(payload) {
   out.newUserRestrictions.messageCount = clampInt(out.newUserRestrictions.messageCount, 1, 50, 3);
   out.newUserRestrictions.durationMinutes = clampInt(out.newUserRestrictions.durationMinutes, 1, 10080, 1440);
   out.contentTypes.maxMessageLength = clampInt(out.contentTypes.maxMessageLength, 0, 4096, 0);
+  out.languageFilter.minChars = clampInt(out.languageFilter.minChars, 1, 500, 2);
 
   // String arrays
   out.profanity.blacklist = Array.isArray(payload.profanity && payload.profanity.blacklist)
@@ -923,11 +1180,13 @@ loadPersistedLogs();
 loadPersistedSessions();
 loadMessageCache();
 loadScanHistory();
+loadChatRegistry();
 
 // Flush in-flight buffers on shutdown so nothing is lost.
 function _gracefulFlush() {
   if (logFlushTimer) { clearTimeout(logFlushTimer); flushLogsToDisk(); }
   if (sessionFlushTimer) { clearTimeout(sessionFlushTimer); flushSessionsToDisk(); }
+  if (chatRegistryDirty) { chatRegistryDirty = false; flushChatRegistry(); }
   if (messageCacheTimer) {
     clearTimeout(messageCacheTimer);
     try { fs.writeFileSync(MESSAGE_CACHE_PATH, JSON.stringify(messageCache)); } catch (e) {}
@@ -955,8 +1214,15 @@ module.exports = {
   addBan,
   removeBan,
   addMute,
+  startHeartbeat,
+  getDowntime,
   recordChat,
   getKnownChats,
+  removeChat,
+  bumpChatAction,
+  setChatOverrides,
+  clearChatOverrides,
+  getSettingsForChat,
   // auth
   adminExists,
   createAdmin,

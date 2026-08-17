@@ -17,6 +17,8 @@ function listBotsRuntime() {
     first_name: r.info && r.info.first_name,
     name: r.name || null,
     addedAt: r.addedAt,
+    // false → Privacy Mode is ON and Telegram hides most group messages.
+    canReadAllMessages: !!(r.info && r.info.can_read_all_group_messages),
     online: true
   }));
 }
@@ -59,6 +61,14 @@ function wasRecentlyRemoved(chatId, userId) {
   return true;
 }
 
+// Channel posts all arrive under Telegram's shared service account, so keying
+// the removed-guard by from.id would lump every channel together. Use the real
+// channel id (sender_chat) when present.
+function senderKey(ctx) {
+  const sc = ctx.message && ctx.message.sender_chat;
+  return sc && sc.id ? sc.id : (ctx.from && ctx.from.id);
+}
+
 // Regex helpers
 const URL_REGEX = /\b((?:https?:\/\/|www\.)[^\s<]+|t\.me\/[^\s<]+|telegram\.me\/[^\s<]+|telegram\.dog\/[^\s<]+)/gi;
 const TME_REGEX = /(?:^|[^a-z0-9])(?:t\.me|telegram\.me|telegram\.dog)\/(?:joinchat\/|\+)?([a-z0-9_+]{3,})/gi;
@@ -74,9 +84,30 @@ function hashMessage(text) {
 // Includes inline-keyboard button labels so rules apply to them too.
 function extractText(message) {
   if (!message) return '';
-  const base = message.text || message.caption || '';
+  const parts = [message.text || message.caption || ''];
+
   const buttons = extractButtonText(message);
-  return buttons ? `${base} ${buttons}`.trim() : base;
+  if (buttons) parts.push(buttons);
+
+  // Spam hides text in payload fields that aren't `text`/`caption`. A shared
+  // contact card, for instance, carries its advert in the contact's NAME —
+  // invisible to every text rule until it's pulled in here.
+  const c = message.contact;
+  if (c) {
+    parts.push(c.first_name || '', c.last_name || '', c.phone_number || '');
+    if (c.vcard) parts.push(String(c.vcard).replace(/[\r\n]+/g, ' ').slice(0, 1024));
+  }
+  if (message.poll) {
+    parts.push(message.poll.question || '');
+    (message.poll.options || []).forEach(o => parts.push(o.text || ''));
+  }
+  const v = message.venue;
+  if (v) parts.push(v.title || '', v.address || '');
+  const inv = message.invoice;
+  if (inv) parts.push(inv.title || '', inv.description || '');
+  if (message.game) parts.push(message.game.title || '', message.game.description || '');
+
+  return parts.filter(Boolean).join(' ').trim();
 }
 
 // Returns forward source info or null. Handles both legacy and forward_origin fields.
@@ -305,6 +336,7 @@ const STAT_TO_LEVEL = {
   premiumEmojiBlocked: 'PREMIUM',
   newUserBlocked: 'NEWUSER',
   contentBlocked: 'CONTENT',
+  languageBlocked: 'CONTENT',
   casHits: 'CAS'
 };
 
@@ -332,8 +364,30 @@ async function applyAction(ctx, opts) {
   const silent = silentForModeration(settings);
 
   if (statKey) config.incrementStat(statKey);
+  if (ctx.chat) config.bumpChatAction(ctx.chat.id);
 
-  try { await ctx.deleteMessage(); } catch (e) {}
+  // Actually verify the delete worked. Previously the failure was swallowed and
+  // we still logged "Removed…", which made the dashboard claim success while the
+  // spam sat in the group untouched (bot not an admin → CHAT_ADMIN_REQUIRED).
+  let deleted = true;
+  let deleteErr = null;
+  try {
+    await ctx.deleteMessage();
+  } catch (e) {
+    deleted = false;
+    deleteErr = (e && e.message) || 'unknown error';
+  }
+
+  if (!deleted) {
+    const noRights = /CHAT_ADMIN_REQUIRED|not enough rights|message can't be deleted/i.test(deleteErr);
+    config.logEvent('ERROR',
+      noRights
+        ? `🚫 Detected ${cat} from ${display} in “${chatTitle}” but COULD NOT DELETE IT — the bot is not an admin there (or lacks “Delete Messages”). Promote it in that group.`
+        : `🚫 Detected ${cat} from ${display} in “${chatTitle}” but delete failed: ${deleteErr}`);
+    // Deleting is the foundation of every action below; without it, warning or
+    // banning on a message that is still visible only adds noise.
+    if (noRights) return;
+  }
 
   if (action === 'delete') {
     config.logEvent(level, `🗑️ Removed ${cat} from ${display} in “${chatTitle}”.`);
@@ -357,7 +411,7 @@ async function applyAction(ctx, opts) {
         markRemoved(ctx.chat.id, userId);
         // Ban happens silently — dashboard logs it under the BAN level.
       } catch (e) {
-        config.logEvent('ERROR', `Ban FAILED for ${display} (check the bot has "Ban Users" admin rights): ${e.message}`);
+        config.logEvent('ERROR', `🚫 Could not ban ${display} in “${chatTitle}” — the bot must be an admin there with “Ban Users”. (${e.message})`);
       }
     }
     return;
@@ -374,7 +428,7 @@ async function applyAction(ctx, opts) {
       markRemoved(ctx.chat.id, userId);
       if (!silent) ctx.reply(`🔇 Muted ${display} for 30 minutes (${warnReason || reason}).`).catch(() => {});
     } catch (e) {
-      config.logEvent('ERROR', `Mute FAILED for ${display} (check the bot has "Restrict Members" admin rights): ${e.message}`);
+      config.logEvent('ERROR', `🚫 Could not mute ${display} in “${chatTitle}” — the bot must be an admin there with “Restrict Members”. (${e.message})`);
     }
     return;
   }
@@ -382,12 +436,20 @@ async function applyAction(ctx, opts) {
   if (action === 'ban') {
     try {
       config.logEvent(level, `🗑️ Removed ${cat} from ${display} in “${chatTitle}”.`);
-      await banMember(ctx.telegram, ctx.chat.id, userId);
-      config.addBan(userId, username, warnReason || reason, ctx.chat.id);
-      markRemoved(ctx.chat.id, userId);
+      const sc = ctx.message && ctx.message.sender_chat;
+      if (sc && sc.id !== ctx.chat.id) {
+        // Sender is a channel — banChatMember can't touch it; block the channel itself.
+        await ctx.telegram.banChatSenderChat(ctx.chat.id, sc.id);
+        config.incrementStat('channelsBanned');
+        markRemoved(ctx.chat.id, sc.id);
+      } else {
+        await banMember(ctx.telegram, ctx.chat.id, userId);
+        config.addBan(userId, username, warnReason || reason, ctx.chat.id);
+        markRemoved(ctx.chat.id, userId);
+      }
       // Ban happens silently — dashboard logs it under the BAN level.
     } catch (e) {
-      config.logEvent('ERROR', `Ban FAILED for ${display} (check the bot has "Ban Users" admin rights): ${e.message}`);
+      config.logEvent('ERROR', `🚫 Could not ban ${display} in “${chatTitle}” — the bot must be an admin there with “Ban Users”. (${e.message})`);
     }
     return;
   }
@@ -468,6 +530,22 @@ async function checkAntiFlood(ctx, settings) {
 
 async function checkAntiForward(ctx, settings) {
   if (!settings.antiForward.enabled) return false;
+
+  // Reply-with-quote to a post in ANOTHER chat embeds that channel's content
+  // (spammers quote their promo channel instead of forwarding it).
+  const ext = ctx.message.external_reply;
+  if (ext && ext.origin && settings.antiForward.blockChannels &&
+      (ext.origin.type === 'channel' || ext.origin.type === 'hidden_user')) {
+    const title = (ext.origin.chat && ext.origin.chat.title) || 'an external channel';
+    await applyAction(ctx, {
+      action: settings.antiForward.action,
+      reason: `quoted content from ${title}`,
+      warnReason: 'quoting posts from other channels is not allowed',
+      statKey: 'forwardsBlocked'
+    });
+    return true;
+  }
+
   const fwd = getForwardSource(ctx.message);
   if (!fwd) return false;
   if (fwd.kind === 'channel' && !settings.antiForward.blockChannels) return false;
@@ -1097,20 +1175,76 @@ async function checkLockChat(ctx, settings) {
   return true;
 }
 
-// -------- Anti sender_chat: user posting as a channel ----------
+// -------- Anti sender_chat: channels posting into the group ----------
+// The button-wall spam ("BINANCE AIRDROP" walls, etc.) is posted BY CHANNELS,
+// which arrive under Telegram's shared service account. banChatMember doesn't
+// work on channels — the correct weapon is banChatSenderChat, which blocks
+// that specific channel from ever posting here again.
 async function checkAntiSenderChat(ctx, settings) {
-  if (!settings.antiSenderChat || !settings.antiSenderChat.enabled) return false;
+  const s = settings.antiSenderChat;
+  if (!s || !s.enabled) return false;
   const senderChat = ctx.message.sender_chat;
   if (!senderChat) return false;
-  // Linked channel of the same group is allowed (it's automatic discussion replies)
-  if (ctx.chat.linked_chat_id && senderChat.id === ctx.chat.linked_chat_id) return false;
-  await applyAction(ctx, {
-    action: settings.antiSenderChat.action,
-    reason: `posted as channel "${senderChat.title || senderChat.username || senderChat.id}"`,
-    warnReason: 'posting as a channel is not allowed here',
-    statKey: 'senderChatBlocked'
-  });
+
+  // Anonymous group admins post as the group itself — always allowed.
+  if (senderChat.id === ctx.chat.id) return false;
+  // Auto-forwards from the group's own linked channel (discussion posts).
+  if (ctx.message.is_automatic_forward && s.allowLinkedChannel !== false) return false;
+
+  const title = senderChat.title || senderChat.username || senderChat.id;
+  config.incrementStat('senderChatBlocked');
+  try { await ctx.deleteMessage(); } catch (e) {}
+
+  if (s.banChannel !== false) {
+    try {
+      await ctx.telegram.banChatSenderChat(ctx.chat.id, senderChat.id);
+      config.incrementStat('channelsBanned');
+      config.logEvent('SENDERCHAT', `📵 Banned channel “${title}” from posting in “${ctx.chat.title || 'the group'}” and removed its spam.`);
+    } catch (e) {
+      config.logEvent('ERROR', `Channel ban FAILED for “${title}” (bot needs "Ban Users" admin right): ${e.message}`);
+    }
+  } else {
+    config.logEvent('SENDERCHAT', `🗑️ Removed a post made as channel “${title}” in “${ctx.chat.title || 'the group'}”.`);
+  }
+  markRemoved(ctx.chat.id, senderChat.id);
   return true;
+}
+
+// -------- Language filter: foreign-script spam (Chinese payment/traffic ads, etc.) ----------
+const CJK_RE = /[一-鿿㐀-䶿぀-ヿ]/g;      // Han + kana (Chinese / Japanese) — NOT Korean
+const KOREAN_RE = /[가-힣ᄀ-ᇿ]/g;            // Hangul syllables + jamo
+const ARABIC_RE = /[؀-ۿݐ-ݿ]/g;
+const CYRILLIC_RE = /[Ѐ-ӿ]/g;
+const THAI_RE = /[฀-๿]/g;
+
+async function checkLanguageFilter(ctx, settings) {
+  const s = settings.languageFilter;
+  if (!s || !s.enabled) return false;
+  const text = extractText(ctx.message);
+  if (!text) return false;
+  const min = s.minChars || 2;
+
+  const scripts = [
+    ['blockCJK', CJK_RE, 'Chinese/Japanese'],
+    ['blockKorean', KOREAN_RE, 'Korean'],
+    ['blockArabic', ARABIC_RE, 'Arabic'],
+    ['blockCyrillic', CYRILLIC_RE, 'Cyrillic'],
+    ['blockThai', THAI_RE, 'Thai']
+  ];
+  for (const [flag, re, label] of scripts) {
+    if (!s[flag]) continue;
+    const m = text.match(re);
+    if (m && m.length >= min) {
+      await applyAction(ctx, {
+        action: s.action,
+        reason: `${label} text (${m.length} chars)`,
+        warnReason: `messages in ${label} are not allowed in this group`,
+        statKey: 'languageBlocked'
+      });
+      return true;
+    }
+  }
+  return false;
 }
 
 // -------- Anti Zalgo / RTL override ----------
@@ -1358,7 +1492,7 @@ async function checkPendingCaptcha(ctx) {
 // Once someone is banned/kicked, their remaining queued messages still arrive.
 // Just delete them — no re-ban, no duplicate log entries.
 async function checkAlreadyRemoved(ctx) {
-  if (!wasRecentlyRemoved(ctx.chat.id, ctx.from.id)) return false;
+  if (!wasRecentlyRemoved(ctx.chat.id, senderKey(ctx))) return false;
   try { await ctx.deleteMessage(); } catch (e) {}
   return true;
 }
@@ -1574,11 +1708,11 @@ function initBot(token, opts = {}) {
         const isOurOwn = ctx.from && ctx.from.is_bot && myId2 && ctx.from.id === myId2;
         if (ctx.message && ctx.chat && ctx.chat.type !== 'private' &&
             ctx.from && !isOurOwn) {
-          config.recordChat(ctx.chat.id, ctx.chat.title);
+          config.recordChat(ctx.chat.id, ctx.chat.title, { type: ctx.chat.type, countMessage: true });
           const m = ctx.message;
           const isContentful = !!(m.text || m.caption || m.sticker || m.photo || m.video ||
                                   m.document || m.animation || m.voice || m.video_note ||
-                                  m.poll || m.paid_media);
+                                  m.poll || m.paid_media || m.contact || m.venue || m.game);
           if (isContentful) {
             const entities = m.entities || m.caption_entities || [];
             config.addMessageToCache({
@@ -1588,7 +1722,10 @@ function initBot(token, opts = {}) {
               userId: ctx.from.id,
               username: ctx.from.username || null,
               firstName: ctx.from.first_name || null,
-              text: (m.text || m.caption || '').slice(0, 4096),
+              // extractText() folds in contact names, poll text, venue, etc. so
+              // routine scans see exactly what the live pipeline saw.
+              text: extractText(m).slice(0, 4096),
+              hasContact: !!m.contact,
               hasSticker: !!m.sticker,
               stickerSetName: (m.sticker && m.sticker.set_name) || null,
               stickerEmoji: (m.sticker && m.sticker.emoji) || null,
@@ -1629,9 +1766,43 @@ function initBot(token, opts = {}) {
       return next();
     });
 
+    // The bot itself being added to / removed from a group. Fires immediately on
+    // join, so the dashboard Groups panel is accurate without waiting for traffic.
+    bot.on('my_chat_member', async (ctx) => {
+      try {
+        const upd = ctx.update.my_chat_member;
+        const status = upd && upd.new_chat_member && upd.new_chat_member.status;
+        const chat = ctx.chat;
+        if (!chat || chat.type === 'private') return;
+
+        if (status === 'left' || status === 'kicked') {
+          config.removeChat(chat.id);
+          config.logEvent('LEAVE', `👋 Removed from group “${chat.title || chat.id}”.`);
+          return;
+        }
+        // member / administrator / restricted → we're in the group
+        let memberCount;
+        try { memberCount = await ctx.telegram.getChatMembersCount(chat.id); } catch (e) {}
+        const nm = upd.new_chat_member || {};
+        const isAdmin = status === 'administrator' || status === 'creator';
+        const canDelete = status === 'creator' || !!nm.can_delete_messages;
+        const canBan = status === 'creator' || !!nm.can_restrict_members;
+        config.recordChat(chat.id, chat.title, { type: chat.type, memberCount, botIsAdmin: isAdmin, canDelete, canBan });
+        config.logEvent('JOIN',
+          `➕ Now in group “${chat.title || chat.id}”${memberCount ? ` (${memberCount} members)` : ''}` +
+          (isAdmin && canDelete && canBan
+            ? ' as admin — full moderation active.'
+            : isAdmin
+              ? ` as admin but MISSING rights (delete:${canDelete ? 'yes' : 'NO'}, ban:${canBan ? 'yes' : 'NO'}) — moderation will fail until both are granted.`
+              : ' — ⚠️ NOT an admin, so it CANNOT delete or ban anything here. Promote it with "Delete Messages" + "Ban Users".'));
+      } catch (e) {
+        config.logEvent('ERROR', `my_chat_member handler failed: ${e.message}`);
+      }
+    });
+
     // New chat members handler (welcome + raid detection)
     bot.on('new_chat_members', async (ctx) => {
-      const settings = config.loadSettings();
+      const settings = config.getSettingsForChat(ctx.chat.id);
       const newMembers = ctx.message.new_chat_members;
 
       config.logEvent('JOIN', `${newMembers.length} new member(s) joined group: ${ctx.chat.title}`);
@@ -1971,6 +2142,56 @@ function initBot(token, opts = {}) {
       actionReply(ctx, `🧹 Purged ${deleted} messages.`);
     }));
 
+    // Delete exactly ONE message: reply to it with /del. For old spam the bot
+    // never witnessed (posted while it was offline) — replying hands the bot
+    // the message id it otherwise has no way to know.
+    // Wipe a spammer's ENTIRE message history in this group, then ban them.
+    // Telegram's revoke_messages flag deletes every message that user ever
+    // posted here — including ones the bot never received (e.g. posted while
+    // it was offline). This is the only way to clear spam the bot missed.
+    bot.command('nuke', adminOnly(async (ctx) => {
+      const reply = ctx.message.reply_to_message;
+      if (!reply) {
+        return actionReply(ctx, '❌ Reply to any message from the spammer with /nuke — it deletes ALL their messages here and bans them.');
+      }
+      const target = reply.from;
+      const sc = reply.sender_chat;
+      try {
+        if (sc && sc.id !== ctx.chat.id) {
+          // Posted as a channel → ban the channel instead.
+          await ctx.telegram.banChatSenderChat(ctx.chat.id, sc.id);
+          markRemoved(ctx.chat.id, sc.id);
+          config.logEvent('BAN', `📵 /nuke: banned channel “${sc.title || sc.id}” in “${ctx.chat.title || 'the group'}”.`);
+          actionReply(ctx, `📵 Banned channel “${sc.title || sc.id}”.`);
+          return;
+        }
+        if (!target) return actionReply(ctx, '❌ Could not identify the sender of that message.');
+
+        // revoke_messages: true is the key — it removes their whole history here.
+        await ctx.telegram.banChatMember(ctx.chat.id, target.id, undefined, { revoke_messages: true });
+        config.addBan(target.id, target.username, `/nuke by ${displayName(ctx.from)} — all messages wiped`, ctx.chat.id);
+        markRemoved(ctx.chat.id, target.id);
+        try { await ctx.deleteMessage(); } catch (e) {} // remove the /nuke command itself
+        config.logEvent('BAN',
+          `💥 /nuke: banned ${displayName(target)} and deleted ALL their messages in “${ctx.chat.title || 'the group'}”.`);
+      } catch (err) {
+        actionReply(ctx, `❌ /nuke failed: ${err.message}`);
+        config.logEvent('ERROR', `/nuke failed in “${ctx.chat.title}”: ${err.message}`);
+      }
+    }));
+
+    bot.command('del', adminOnly(async (ctx) => {
+      const reply = ctx.message.reply_to_message;
+      if (!reply) return actionReply(ctx, '❌ Reply to the message you want deleted with /del.');
+      try {
+        await ctx.telegram.deleteMessage(ctx.chat.id, reply.message_id);
+        await ctx.deleteMessage().catch(() => {}); // clean up the /del command too
+        config.logEvent('DELETE', `🗑️ ${displayName(ctx.from)} deleted a message with /del in “${ctx.chat.title || 'the group'}”.`);
+      } catch (e) {
+        actionReply(ctx, `❌ Could not delete: ${e.message}`);
+      }
+    }));
+
     bot.command('status', adminOnly(async (ctx) => {
       const s = config.loadSettings();
       ctx.reply(
@@ -2018,7 +2239,9 @@ function initBot(token, opts = {}) {
       const txt = ctx.message.text || '';
       if (txt.startsWith('/')) return;
 
-      const settings = config.loadSettings();
+      // Per-group settings: global rules with this chat's overrides applied,
+      // so e.g. a Korean group can allow Hangul while others block it.
+      const settings = config.getSettingsForChat(ctx.chat.id);
       const senderIsAdmin = await isAdminCached(ctx, ctx.from.id);
       // A rule can opt admins back in via enforceOnAdmins
       const skip = (rule) => senderIsAdmin && !(rule && rule.enforceOnAdmins);
@@ -2028,6 +2251,10 @@ function initBot(token, opts = {}) {
         if (await checkLockChat(ctx, settings)) return;
         if (await checkAlreadyRemoved(ctx)) return; // already banned → just delete leftovers
         if (await checkPendingCaptcha(ctx)) return;
+        // Channels posting into the group — must run before the admin check,
+        // because channel posts arrive under Telegram's service account whose
+        // "admin" status is meaningless.
+        if (await checkAntiSenderChat(ctx, settings)) return;
         if (await checkAntiBotPoster(ctx, settings)) return;
 
         // Content rules — enforceOnAdmins by default
@@ -2049,7 +2276,7 @@ function initBot(token, opts = {}) {
 
         // Non-admin-only rules
         if (await checkNewUserRestrictions(ctx, settings)) return;
-        if (await checkAntiSenderChat(ctx, settings)) return;
+        if (await checkLanguageFilter(ctx, settings)) return;
         if (await checkAntiFlood(ctx, settings)) return;
         if (await checkAntiZalgo(ctx, settings)) return;
         if (await checkAntiButton(ctx, settings)) return;
@@ -2074,10 +2301,12 @@ function initBot(token, opts = {}) {
       const txt = ctx.message.text || '';
       if (txt.startsWith('/')) return;
 
-      const settings = config.loadSettings();
+      const settings = config.getSettingsForChat(ctx.chat.id);
       const senderIsAdmin = await isAdminCached(ctx, ctx.from.id);
       const skip = (rule) => senderIsAdmin && !(rule && rule.enforceOnAdmins);
       try {
+        if (await checkAlreadyRemoved(ctx)) return;
+        if (await checkAntiSenderChat(ctx, settings)) return;
         if (!skip(settings.contentTypes) && await checkContentTypes(ctx, settings)) return;
         if (!skip(settings.antiPremiumEmoji) && await checkAntiPremiumEmoji(ctx, settings)) return;
         if (!skip(settings.antiLink) && await checkAntiLink(ctx, settings)) return;
@@ -2089,7 +2318,7 @@ function initBot(token, opts = {}) {
         if (!skip(settings.antiMention) && await checkAntiMention(ctx, settings)) return;
         if (senderIsAdmin) return;
         if (await checkNewUserRestrictions(ctx, settings)) return;
-        if (await checkAntiSenderChat(ctx, settings)) return;
+        if (await checkLanguageFilter(ctx, settings)) return;
         if (await checkAntiZalgo(ctx, settings)) return;
         if (await checkAntiButton(ctx, settings)) return;
       } catch (err) {
@@ -2398,7 +2627,7 @@ Users muted: ${s.usersMuted}`,
 `🛡️ *OctoGod commands* (admin-only)
 
 /ban /unban /gban /ungban /kick /mute [min] /unmute /warn /clearwarns
-/userinfo /purge (reply) /stats /status
+/userinfo /nuke (reply) /del (reply) /purge (reply) /stats /status
 /id /ping /rules /report (reply)
 /lock /unlock_chat /unraid
 /blockemoji (reply) /unblockemoji <id>
@@ -2427,6 +2656,39 @@ Users muted: ${s.usersMuted}`,
           addedAt: Date.now()
         });
         config.logEvent('INFO', `Bot @${info.username} (id ${info.id}) registered. ${bots.size} bot(s) total.`);
+
+        // THE most common reason a moderation bot "does nothing": Privacy Mode.
+        // With it ON, Telegram only forwards commands/replies/mentions, so the
+        // bot never even sees ordinary spam and cannot delete it.
+        if (info.can_read_all_group_messages === false) {
+          config.logEvent('WATCHDOG',
+            `🚨 PRIVACY MODE IS ON for @${info.username} — Telegram is hiding most group messages from the bot, ` +
+            `so spam cannot be detected. FIX: open @BotFather → /mybots → @${info.username} → Bot Settings → ` +
+            `Group Privacy → Turn OFF. Then REMOVE the bot from each group and ADD it back (the change only ` +
+            `applies on re-join).`);
+        } else {
+          config.logEvent('INFO', `🔓 Privacy mode is off — @${info.username} can see all group messages.`);
+        }
+
+        // Tell the operator how long the bot was blind, and whether Telegram's
+        // ~24h backlog could still cover it.
+        if (bots.size === 1) {
+          const gap = config.getDowntime();
+          if (gap) {
+            if (gap.beyondBacklog) {
+              config.logEvent('WATCHDOG',
+                `⏱️ The bot was OFFLINE for ${gap.downText}. Telegram only stores about 24h of missed messages, ` +
+                `so anything posted before that window is gone for good — it cannot be auto-deleted now. ` +
+                `To clean a spammer's old posts, reply to one of their messages with /nuke. ` +
+                `Keep the bot running 24/7 to avoid these gaps.`);
+            } else {
+              config.logEvent('INFO',
+                `⏱️ The bot was offline for ${gap.downText} — catching up on missed messages now.`);
+            }
+          }
+          config.startHeartbeat();
+        }
+
         manuallyStopped.delete(info.id); // explicit (re)start clears the do-not-relaunch flag
         refreshLegacyBotRef();
         startWatchdog();
@@ -2436,10 +2698,12 @@ Users muted: ${s.usersMuted}`,
         return;
       }
 
-      // Start polling. `dropPendingUpdates` discards the backlog that piled up
-      // while the bot was offline — otherwise every restart replays hundreds of
-      // old messages (and re-runs the boot scan over stale cache).
-      _justLaunched.launch({ dropPendingUpdates: true }).catch(err => {
+      // Start polling and PROCESS the offline backlog: spam posted while the
+      // bot was down (PC asleep, restart, crash) flows through the moderation
+      // pipeline on startup and gets deleted instead of surviving forever.
+      // (Telegram keeps up to 24h of backlog; the burst dedup + removed-guard
+      // keep the replay quiet.)
+      _justLaunched.launch({ dropPendingUpdates: false }).catch(err => {
         const idNum = _justLaunched.botInfo && _justLaunched.botInfo.id;
         if (idNum) bots.delete(idNum);
         refreshLegacyBotRef();
@@ -2682,6 +2946,9 @@ function evaluateCacheEntry(entry, settings) {
     if (entry.hasPaidMedia && ct.blockPaidMedia) {
       return { rule: 'content', reason: 'paid media', level: 'CONTENT' };
     }
+    if (entry.hasContact && ct.blockContacts) {
+      return { rule: 'content', reason: 'shared contact card', level: 'CONTENT' };
+    }
     if (entry.hasSpoiler && ct.blockSpoilerMedia) {
       return { rule: 'content', reason: 'spoiler media', level: 'CONTENT' };
     }
@@ -2831,6 +3098,42 @@ async function unbanUser(userId, chatIdOverride) {
   };
 }
 
+// Ask Telegram for each known group's current title, member count, and whether
+// the bot is still an admin there. Powers the dashboard Groups panel.
+async function refreshChats() {
+  const tg = anyBot();
+  if (!tg) return { ok: false, error: 'bot_not_running' };
+  const chats = config.getKnownChats();
+  const results = [];
+  for (const id of Object.keys(chats)) {
+    try {
+      const info = await tg.telegram.getChat(id);
+      let memberCount;
+      try { memberCount = await tg.telegram.getChatMembersCount(id); } catch (e) {}
+      let botIsAdmin = false, canDelete = false, canBan = false;
+      try {
+        const me = await tg.telegram.getChatMember(id, tg.botInfo.id);
+        botIsAdmin = ['administrator', 'creator'].includes(me.status);
+        // A creator has every right implicitly; an administrator has explicit flags.
+        canDelete = me.status === 'creator' || !!me.can_delete_messages;
+        canBan = me.status === 'creator' || !!me.can_restrict_members;
+      } catch (e) {}
+      config.recordChat(id, info.title, { type: info.type, memberCount, botIsAdmin, canDelete, canBan });
+      results.push({ id, ok: true, botIsAdmin, canDelete, canBan });
+    } catch (e) {
+      // Bot was removed / chat deleted → drop it from the registry.
+      if (/chat not found|bot was kicked|forbidden/i.test(e.message || '')) {
+        config.removeChat(id);
+        results.push({ id, ok: false, removed: true });
+      } else {
+        results.push({ id, ok: false, error: e.message });
+      }
+    }
+    await new Promise(r => setTimeout(r, 60));
+  }
+  return { ok: true, results };
+}
+
 module.exports = {
   initBot,
   stopBot,
@@ -2838,5 +3141,6 @@ module.exports = {
   listBots,
   unbanUser,
   runRoutineScan,
-  registerScanProgress
+  registerScanProgress,
+  refreshChats
 };

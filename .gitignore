@@ -9,3 +9,4 @@ db/
 .claude/
 *.log
 .DS_Store
+logs/

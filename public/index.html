@@ -131,6 +131,10 @@
         <a href="#" class="menu-item" data-tab="tab-terminal">
           <i class="fa-solid fa-terminal"></i> <span>Live Terminal</span>
         </a>
+        <a href="#" class="menu-item" data-tab="tab-groups">
+          <i class="fa-solid fa-users-rectangle"></i> <span>Groups</span>
+          <span class="menu-badge" id="menu-groups-count">0</span>
+        </a>
         <a href="#" class="menu-item" data-tab="tab-moderation">
           <i class="fa-solid fa-user-shield"></i> <span>User Database</span>
         </a>
@@ -177,6 +181,14 @@
       <div id="tab-overview" class="tab-panel active">
         <!-- STATS GRID -->
         <div class="stats-grid">
+          <div class="stat-card glass">
+            <div class="stat-icon link-color"><i class="fa-solid fa-users-rectangle"></i></div>
+            <div class="stat-details">
+              <span class="stat-label">Groups Protected</span>
+              <h3 class="stat-value" id="stat-groups">0</h3>
+            </div>
+          </div>
+
           <div class="stat-card glass">
             <div class="stat-icon message-color"><i class="fa-solid fa-comments"></i></div>
             <div class="stat-details">
@@ -360,6 +372,62 @@
             </div>
           </div>
 
+          <!-- Who the rules apply to — plain-English admin exemptions -->
+          <div class="rules-card glass" style="border-left:4px solid var(--accent)">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-user-tie"></i> Do these rules apply to your admins?</h3>
+            </div>
+            <div class="rules-card-body">
+              <p class="input-hint" style="margin-bottom:14px">
+                Group admins are <strong>trusted by default</strong> — they can post links, polls, media and custom emoji without being filtered.
+                Tick a box below only if you want that rule to apply to admins as well.
+                Everything not listed here (spam/flood limits, captcha, forwards, mentions) <strong>never</strong> applies to admins.
+              </p>
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="adm-link">
+                    <span class="checkmark"></span>
+                    Links &amp; link previews
+                  </label>
+                  <span class="input-hint">Off = admins may post any link.</span>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="adm-content">
+                    <span class="checkmark"></span>
+                    Polls, paid media &amp; file types
+                  </label>
+                  <span class="input-hint">Off = admins may post polls and any media.</span>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="adm-premium">
+                    <span class="checkmark"></span>
+                    Premium / custom emoji &amp; stickers
+                  </label>
+                  <span class="input-hint">Off = admins may use premium emoji.</span>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="adm-profanity">
+                    <span class="checkmark"></span>
+                    Banned words / NSFW text
+                  </label>
+                  <span class="input-hint">Recommended ON — protects against a hacked admin account.</span>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="adm-adultemoji">
+                    <span class="checkmark"></span>
+                    Adult emoji (🔞 🍑 💦)
+                  </label>
+                  <span class="input-hint">Recommended ON.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Rules Categories Navigation Bar -->
           <div class="rules-categories-tabs glass-inner">
             <button type="button" class="category-btn active" data-category="welcome">👋 Welcome & Joins</button>
@@ -499,15 +567,9 @@
                   <label class="checkbox-container">
                     <input type="checkbox" id="rule-link-enforce-admins">
                     <span class="checkmark"></span>
-                    Enforce on admins too
+                    Also delete links posted by admins
                   </label>
-                </div>
-                <div class="input-group checkbox-group">
-                  <label class="checkbox-container">
-                    <input type="checkbox" id="rule-link-admin">
-                    <span class="checkmark"></span>
-                    Legacy: allow links from admins
-                  </label>
+                  <span class="input-hint">Leave OFF so your admins can post announcements and official links freely.</span>
                 </div>
               </div>
               <div class="input-group">
@@ -1285,15 +1347,82 @@ SexyStickers"></textarea>
               </label>
             </div>
             <div class="rules-card-body" id="body-senderchat">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-senderchat-banchannel">
+                    <span class="checkmark"></span>
+                    Ban the channel permanently (banChatSenderChat)
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-senderchat-linked">
+                    <span class="checkmark"></span>
+                    Allow the group's own linked channel
+                  </label>
+                </div>
+              </div>
               <div class="input-group">
-                <label for="rule-senderchat-action">Action</label>
+                <label for="rule-senderchat-action">Action on the message</label>
                 <select id="rule-senderchat-action">
                   <option value="delete">Delete Message only</option>
                   <option value="delete_and_warn">Delete Message & Warn User</option>
                   <option value="ban">Ban User instantly</option>
                 </select>
-                <span class="input-hint">Stops users from posting anonymously as a channel they own.</span>
+                <span class="input-hint">Catches channel-posted spam (button walls, airdrop scams). Banning the channel stops it from ever posting again.</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Language Filter card -->
+          <div class="rules-card glass" data-rule-category="chat">
+            <div class="rules-card-header">
+              <h3><i class="fa-solid fa-language"></i> Language Filter (foreign-script spam)</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rule-language-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="rules-card-body" id="body-language">
+              <div class="input-group-row">
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-language-cjk">
+                    <span class="checkmark"></span>
+                    Block Chinese/Japanese text
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-language-arabic">
+                    <span class="checkmark"></span>
+                    Block Arabic text
+                  </label>
+                </div>
+                <div class="input-group checkbox-group">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="rule-language-cyrillic">
+                    <span class="checkmark"></span>
+                    Block Cyrillic text
+                  </label>
+                </div>
+              </div>
+              <div class="input-group-row">
+                <div class="input-group">
+                  <label for="rule-language-minchars">Min chars of a blocked script to trigger</label>
+                  <input type="number" id="rule-language-minchars" min="1" max="500">
+                </div>
+                <div class="input-group">
+                  <label for="rule-language-action">Action</label>
+                  <select id="rule-language-action">
+                    <option value="delete">Delete Message only</option>
+                    <option value="delete_and_warn">Delete Message & Warn User</option>
+                    <option value="ban">Ban User instantly</option>
+                  </select>
+                </div>
+              </div>
+              <span class="input-hint">Kills Chinese payment/traffic-buying spam in English-speaking groups. Only enable scripts your community doesn't use.</span>
             </div>
           </div>
 
@@ -1361,6 +1490,134 @@ SexyStickers"></textarea>
           </div>
           <div class="terminal-body" id="terminal-body-console">
             <!-- Log entries will be written here dynamically -->
+          </div>
+        </div>
+      </div>
+
+      <!-- GROUPS PANEL -->
+      <div id="tab-groups" class="tab-panel">
+        <div class="panel-box glass">
+          <div class="panel-box-header">
+            <h3>👥 Connected Groups <span class="item-badge" id="groups-count-badge">0</span></h3>
+            <p>Every group this bot protects. Each one can override the global rules — useful when you run English, Korean and Chinese communities side by side.</p>
+          </div>
+          <div style="margin-bottom:14px">
+            <button class="btn btn-secondary btn-small" id="btn-refresh-chats">
+              <i class="fa-solid fa-rotate"></i> Refresh from Telegram
+            </button>
+            <span class="input-hint" style="margin-left:10px">Pulls live titles + member counts and drops groups the bot was removed from.</span>
+          </div>
+          <div class="table-container">
+            <table class="data-table" id="table-groups">
+              <thead>
+                <tr>
+                  <th>Group</th>
+                  <th>Members</th>
+                  <th>Bot Permissions</th>
+                  <th>Actions Taken</th>
+                  <th>Language Rules</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="groups-tbody">
+                <tr><td colspan="6" class="center-text text-muted">No groups yet — add the bot to a group and promote it to admin.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Per-group override editor -->
+        <div class="panel-box glass margin-top-20 hidden" id="group-editor">
+          <div class="panel-box-header">
+            <h3>⚙️ Rules for <span id="group-editor-title">—</span></h3>
+            <p>These settings apply to this group only. Anything left as “Use global” follows the main Moderation Rules tab.</p>
+          </div>
+          <div class="input-group-row">
+            <div class="input-group">
+              <label for="go-lang-enabled">Language filter</label>
+              <select id="go-lang-enabled">
+                <option value="">Use global</option>
+                <option value="true">On for this group</option>
+                <option value="false">Off for this group</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <label for="go-lang-action">Action</label>
+              <select id="go-lang-action">
+                <option value="">Use global</option>
+                <option value="delete">Delete only</option>
+                <option value="delete_and_warn">Delete &amp; warn</option>
+                <option value="ban">Ban</option>
+              </select>
+            </div>
+          </div>
+          <div class="input-group-row">
+            <div class="input-group checkbox-group">
+              <label class="checkbox-container">
+                <input type="checkbox" id="go-block-cjk">
+                <span class="checkmark"></span>
+                Block Chinese / Japanese
+              </label>
+            </div>
+            <div class="input-group checkbox-group">
+              <label class="checkbox-container">
+                <input type="checkbox" id="go-block-korean">
+                <span class="checkmark"></span>
+                Block Korean
+              </label>
+            </div>
+            <div class="input-group checkbox-group">
+              <label class="checkbox-container">
+                <input type="checkbox" id="go-block-cyrillic">
+                <span class="checkmark"></span>
+                Block Cyrillic
+              </label>
+            </div>
+            <div class="input-group checkbox-group">
+              <label class="checkbox-container">
+                <input type="checkbox" id="go-block-arabic">
+                <span class="checkmark"></span>
+                Block Arabic
+              </label>
+            </div>
+            <div class="input-group checkbox-group">
+              <label class="checkbox-container">
+                <input type="checkbox" id="go-block-thai">
+                <span class="checkmark"></span>
+                Block Thai
+              </label>
+            </div>
+          </div>
+          <div class="input-group-row">
+            <div class="input-group">
+              <label for="go-silent">Silent mode (no bot replies)</label>
+              <select id="go-silent">
+                <option value="">Use global</option>
+                <option value="true">Silent here</option>
+                <option value="false">Allow replies here</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <label for="go-captcha">Join captcha</label>
+              <select id="go-captcha">
+                <option value="">Use global</option>
+                <option value="true">On for this group</option>
+                <option value="false">Off for this group</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <label for="go-links">Link blocking</label>
+              <select id="go-links">
+                <option value="">Use global</option>
+                <option value="true">On for this group</option>
+                <option value="false">Off for this group</option>
+              </select>
+            </div>
+          </div>
+          <div class="danger-btn-row">
+            <button class="btn btn-primary" id="btn-save-group-overrides"><i class="fa-solid fa-save"></i> Save Group Rules</button>
+            <button class="btn btn-outline" id="btn-clear-group-overrides"><i class="fa-solid fa-rotate-left"></i> Reset to Global</button>
+            <button class="btn btn-secondary" id="btn-close-group-editor">Close</button>
           </div>
         </div>
       </div>

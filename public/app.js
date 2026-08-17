@@ -140,6 +140,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // Anti Sender-Chat
   const ruleSenderChatEnabled = document.getElementById('rule-senderchat-enabled');
   const ruleSenderChatAction = document.getElementById('rule-senderchat-action');
+  const ruleSenderChatBanChannel = document.getElementById('rule-senderchat-banchannel');
+  const ruleSenderChatLinked = document.getElementById('rule-senderchat-linked');
+
+  // Language Filter
+  const ruleLanguageEnabled = document.getElementById('rule-language-enabled');
+  const ruleLanguageCjk = document.getElementById('rule-language-cjk');
+  const ruleLanguageArabic = document.getElementById('rule-language-arabic');
+  const ruleLanguageCyrillic = document.getElementById('rule-language-cyrillic');
+  const ruleLanguageMinChars = document.getElementById('rule-language-minchars');
+  const ruleLanguageAction = document.getElementById('rule-language-action');
 
   // Anti Zalgo
   const ruleZalgoEnabled = document.getElementById('rule-zalgo-enabled');
@@ -166,7 +176,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const ruleSpamInterval = document.getElementById('rule-spam-interval');
   const ruleSpamAction = document.getElementById('rule-spam-action');
   const ruleLinkEnabled = document.getElementById('rule-link-enabled');
-  const ruleLinkAdmin = document.getElementById('rule-link-admin');
   const ruleLinkStrict = document.getElementById('rule-link-strict');
   const ruleLinkEnforceAdmins = document.getElementById('rule-link-enforce-admins');
   const ruleLinkAction = document.getElementById('rule-link-action');
@@ -219,6 +228,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const rulePreviewEnabled = document.getElementById('rule-preview-enabled');
   const rulePreviewWeb = document.getElementById('rule-preview-web');
   const rulePreviewAction = document.getElementById('rule-preview-action');
+
+  // "Do these rules apply to your admins?" summary card. Each box mirrors the
+  // enforceOnAdmins checkbox that already lives inside the matching rule card,
+  // so the existing save payload keeps working — this is just a clear front-end.
+  const admLink = document.getElementById('adm-link');
+  const admContent = document.getElementById('adm-content');
+  const admPremium = document.getElementById('adm-premium');
+  const admProfanity = document.getElementById('adm-profanity');
+  const admAdultEmoji = document.getElementById('adm-adultemoji');
 
   // Anti-Premium Emoji & Sticker
   const rulePremiumEnabled = document.getElementById('rule-premium-enabled');
@@ -336,6 +354,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadModData();
         loadLastScan();
         loadBots();
+        loadChats();
       } else {
         showAuthScreen('setup');
         chkToken.className = '';
@@ -466,6 +485,7 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.on('data_update', () => {
       loadModData();
       loadBots();
+      loadChats();
     });
 
     // Live routine-scan progress (button label + summary panel update)
@@ -600,6 +620,7 @@ document.addEventListener('DOMContentLoaded', () => {
     'tab-overview': { title: 'Overview Dashboard', desc: 'Monitor your Telegram community health and stats.' },
     'tab-rules': { title: 'Moderation Rules', desc: 'Configure automatic security filters and response actions.' },
     'tab-terminal': { title: 'Live Console Terminal', desc: 'Real-time output stream directly from the OctoGod moderator service.' },
+    'tab-groups': { title: 'Connected Groups', desc: 'Every group the bot protects, with per-group rule overrides.' },
     'tab-moderation': { title: 'Moderation User Database', desc: 'Verify warning records and manage restricted accounts.' },
     'tab-settings': { title: 'System Credentials', desc: 'View API logs, configure bot token, and manage system status.' }
   };
@@ -659,6 +680,34 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Populate configuration forms
+  // Keep the "applies to admins?" summary card and the per-rule checkboxes in
+  // lockstep, in both directions, so the two views can never disagree.
+  const ADMIN_MIRRORS = [
+    () => [admLink, [ruleLinkEnforceAdmins, rulePreviewEnforceAdmins]],
+    () => [admContent, [ruleContentEnforceAdmins]],
+    () => [admPremium, [rulePremiumEnforceAdmins]],
+    () => [admProfanity, [ruleProfanityEnforceAdmins]],
+    () => [admAdultEmoji, [ruleAdultEmojiEnforceAdmins]]
+  ];
+  function syncAdminCardFromRules() {
+    ADMIN_MIRRORS.forEach(get => {
+      const [summary, targets] = get();
+      if (!summary) return;
+      const first = targets.find(Boolean);
+      if (first) summary.checked = first.checked;
+    });
+  }
+  ADMIN_MIRRORS.forEach(get => {
+    const [summary, targets] = get();
+    if (!summary) return;
+    summary.addEventListener('change', () => {
+      targets.forEach(t => { if (t) t.checked = summary.checked; });
+    });
+    targets.forEach(t => {
+      if (t) t.addEventListener('change', syncAdminCardFromRules);
+    });
+  });
+
   function populateRulesForm(set) {
     // Silent Mode
     if (set.silentMode) {
@@ -686,7 +735,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Anti-Link
     ruleLinkEnabled.checked = set.antiLink.enabled;
-    ruleLinkAdmin.checked = set.antiLink.allowAdmins;
+
     ruleLinkStrict.checked = !!set.antiLink.strictMode;
     ruleLinkEnforceAdmins.checked = !!set.antiLink.enforceOnAdmins;
     if (ruleLinkWhitelist) ruleLinkWhitelist.value = (set.antiLink.whitelistDomains || []).join('\n');
@@ -781,8 +830,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // Anti Sender-Chat
     if (set.antiSenderChat) {
       ruleSenderChatEnabled.checked = !!set.antiSenderChat.enabled;
-      ruleSenderChatAction.value = set.antiSenderChat.action || 'delete_and_warn';
+      ruleSenderChatAction.value = set.antiSenderChat.action || 'delete';
+      if (ruleSenderChatBanChannel) ruleSenderChatBanChannel.checked = set.antiSenderChat.banChannel !== false;
+      if (ruleSenderChatLinked) ruleSenderChatLinked.checked = set.antiSenderChat.allowLinkedChannel !== false;
       toggleRuleCardBody('senderchat', set.antiSenderChat.enabled);
+    }
+
+    // Language Filter
+    if (set.languageFilter) {
+      ruleLanguageEnabled.checked = !!set.languageFilter.enabled;
+      ruleLanguageCjk.checked = !!set.languageFilter.blockCJK;
+      ruleLanguageArabic.checked = !!set.languageFilter.blockArabic;
+      ruleLanguageCyrillic.checked = !!set.languageFilter.blockCyrillic;
+      ruleLanguageMinChars.value = set.languageFilter.minChars || 2;
+      ruleLanguageAction.value = set.languageFilter.action || 'delete_and_warn';
+      toggleRuleCardBody('language', set.languageFilter.enabled);
     }
     // Anti Zalgo
     if (set.antiZalgo) {
@@ -880,6 +942,8 @@ document.addEventListener('DOMContentLoaded', () => {
       ruleAdultEmojiAction.value = set.antiAdultEmoji.action || 'delete_and_warn';
       toggleRuleCardBody('adultemoji', set.antiAdultEmoji.enabled);
     }
+
+    syncAdminCardFromRules();
   }
 
   // Update quick controls switch positions
@@ -928,6 +992,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { check: ruleCasEnabled, key: 'cas' },
     { check: ruleNameFilterEnabled, key: 'namefilter' },
     { check: ruleSenderChatEnabled, key: 'senderchat' },
+    { check: ruleLanguageEnabled, key: 'language' },
     { check: ruleZalgoEnabled, key: 'zalgo' },
     { check: ruleScanEnabled, key: 'scan' },
     { check: ruleNewUserEnabled, key: 'newuser' },
@@ -971,7 +1036,7 @@ document.addEventListener('DOMContentLoaded', () => {
       },
       antiLink: {
         enabled: ruleLinkEnabled.checked,
-        allowAdmins: ruleLinkAdmin.checked,
+
         strictMode: ruleLinkStrict.checked,
         enforceOnAdmins: ruleLinkEnforceAdmins.checked,
         whitelistDomains: ruleLinkWhitelist
@@ -1003,7 +1068,17 @@ document.addEventListener('DOMContentLoaded', () => {
       },
       antiSenderChat: {
         enabled: ruleSenderChatEnabled.checked,
+        banChannel: ruleSenderChatBanChannel ? ruleSenderChatBanChannel.checked : true,
+        allowLinkedChannel: ruleSenderChatLinked ? ruleSenderChatLinked.checked : true,
         action: ruleSenderChatAction.value
+      },
+      languageFilter: {
+        enabled: ruleLanguageEnabled.checked,
+        blockCJK: ruleLanguageCjk.checked,
+        blockArabic: ruleLanguageArabic.checked,
+        blockCyrillic: ruleLanguageCyrillic.checked,
+        minChars: parseInt(ruleLanguageMinChars.value, 10) || 2,
+        action: ruleLanguageAction.value
       },
       antiZalgo: {
         enabled: ruleZalgoEnabled.checked,
@@ -1515,6 +1590,178 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // -------- Connected Groups + per-group rule overrides --------
+  const groupsTbody = document.getElementById('groups-tbody');
+  const groupsCountBadge = document.getElementById('groups-count-badge');
+  const menuGroupsCount = document.getElementById('menu-groups-count');
+  const statGroups = document.getElementById('stat-groups');
+  const groupEditor = document.getElementById('group-editor');
+  const groupEditorTitle = document.getElementById('group-editor-title');
+  let editingChatId = null;
+  let chatsCache = [];
+
+  const SCRIPT_LABELS = {
+    blockCJK: '中日', blockKorean: '한', blockCyrillic: 'Кир', blockArabic: 'عر', blockThai: 'ไทย'
+  };
+
+  async function loadChats() {
+    if (!groupsTbody) return;
+    try {
+      const r = await api('/api/chats');
+      const data = await r.json();
+      chatsCache = data.chats || [];
+      const n = data.count || 0;
+      if (groupsCountBadge) groupsCountBadge.textContent = n;
+      if (menuGroupsCount) menuGroupsCount.textContent = n;
+      if (statGroups) statGroups.textContent = n;
+
+      if (!chatsCache.length) {
+        groupsTbody.innerHTML = `<tr><td colspan="6" class="center-text text-muted">No groups yet — add the bot to a group and promote it to admin.</td></tr>`;
+        return;
+      }
+      groupsTbody.innerHTML = chatsCache.map(c => {
+        const lang = (c.overrides && c.overrides.languageFilter) || {};
+        const blocked = Object.keys(SCRIPT_LABELS).filter(k => lang[k]).map(k => SCRIPT_LABELS[k]);
+        let langCell;
+        if (lang.enabled === false) {
+          langCell = '<span class="item-badge" style="background:rgba(120,120,120,.2);color:#888">Filter off</span>';
+        } else if (blocked.length) {
+          langCell = blocked.map(b => `<span class="item-badge purple-bg">${b}</span>`).join(' ');
+        } else {
+          langCell = '<span class="text-muted">Global</span>';
+        }
+        // Permission health — the #1 reason moderation silently does nothing.
+        let permCell;
+        if (c.botIsAdmin === null || c.botIsAdmin === undefined) {
+          permCell = '<span class="text-muted">Unknown — hit Refresh</span>';
+        } else if (!c.botIsAdmin) {
+          permCell = '<span class="item-badge red-bg" title="The bot is only a member here. It can read messages but cannot delete or ban. Promote it to admin.">⚠ NOT ADMIN — can\'t delete/ban</span>';
+        } else if (!c.canDelete || !c.canBan) {
+          permCell = `<span class="item-badge yellow-bg" title="Admin, but missing rights.">⚠ missing: ${!c.canDelete ? 'Delete Messages' : ''}${(!c.canDelete && !c.canBan) ? ' + ' : ''}${!c.canBan ? 'Ban Users' : ''}</span>`;
+        } else {
+          permCell = '<span class="item-badge" style="background:rgba(0,200,0,0.2);color:#16a34a">✓ Admin — full rights</span>';
+        }
+        return `<tr>
+          <td><strong>${escapeHtml(c.title || 'Untitled')}</strong><br><code class="text-muted">${c.id}</code></td>
+          <td>${c.memberCount !== null && c.memberCount !== undefined ? c.memberCount : '—'}</td>
+          <td>${permCell}</td>
+          <td>${c.actionsTaken || 0}</td>
+          <td>${langCell}${c.hasOverrides ? ' <span class="item-badge yellow-bg" title="This group has custom rules">custom</span>' : ''}</td>
+          <td><button class="btn btn-secondary btn-small group-edit-btn" data-id="${c.id}"><i class="fa-solid fa-sliders"></i> Rules</button></td>
+        </tr>`;
+      }).join('');
+
+      document.querySelectorAll('.group-edit-btn').forEach(b =>
+        b.addEventListener('click', () => openGroupEditor(b.dataset.id)));
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('Could not load groups.', 'error');
+    }
+  }
+
+  const triState = (v) => (v === undefined || v === null) ? '' : String(!!v);
+
+  function openGroupEditor(chatId) {
+    const c = chatsCache.find(x => String(x.id) === String(chatId));
+    if (!c || !groupEditor) return;
+    editingChatId = chatId;
+    groupEditorTitle.textContent = c.title || chatId;
+    const ov = c.overrides || {};
+    const lang = ov.languageFilter || {};
+    document.getElementById('go-lang-enabled').value = triState(lang.enabled);
+    document.getElementById('go-lang-action').value = lang.action || '';
+    document.getElementById('go-block-cjk').checked = !!lang.blockCJK;
+    document.getElementById('go-block-korean').checked = !!lang.blockKorean;
+    document.getElementById('go-block-cyrillic').checked = !!lang.blockCyrillic;
+    document.getElementById('go-block-arabic').checked = !!lang.blockArabic;
+    document.getElementById('go-block-thai').checked = !!lang.blockThai;
+    document.getElementById('go-silent').value = triState(ov.silentMode && ov.silentMode.enabled);
+    document.getElementById('go-captcha').value = triState(ov.captcha && ov.captcha.enabled);
+    document.getElementById('go-links').value = triState(ov.antiLink && ov.antiLink.enabled);
+    groupEditor.classList.remove('hidden');
+    groupEditor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  async function saveGroupOverrides() {
+    if (!editingChatId) return;
+    const langEnabled = document.getElementById('go-lang-enabled').value;
+    const langAction = document.getElementById('go-lang-action').value;
+    const overrides = {};
+
+    const lang = {};
+    if (langEnabled !== '') lang.enabled = langEnabled === 'true';
+    if (langAction) lang.action = langAction;
+    // Script toggles are only meaningful when the filter isn't turned off here.
+    ['blockCJK:go-block-cjk', 'blockKorean:go-block-korean', 'blockCyrillic:go-block-cyrillic',
+     'blockArabic:go-block-arabic', 'blockThai:go-block-thai'].forEach(pair => {
+      const [key, id] = pair.split(':');
+      const el = document.getElementById(id);
+      if (el && el.checked) lang[key] = true;
+      else if (el) lang[key] = false;
+    });
+    if (Object.keys(lang).length) overrides.languageFilter = lang;
+
+    const silent = document.getElementById('go-silent').value;
+    if (silent !== '') overrides.silentMode = { enabled: silent === 'true' };
+    const captcha = document.getElementById('go-captcha').value;
+    if (captcha !== '') overrides.captcha = { enabled: captcha === 'true' };
+    const links = document.getElementById('go-links').value;
+    if (links !== '') overrides.antiLink = { enabled: links === 'true' };
+
+    try {
+      const r = await api(`/api/chats/${editingChatId}/overrides`, { method: 'POST', body: { overrides } });
+      const j = await r.json();
+      if (j.success) {
+        showToast('Group rules saved.', 'success');
+        loadChats();
+      } else showToast(j.error || 'Failed to save.', 'error');
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('Network error.', 'error');
+    }
+  }
+
+  const btnSaveGroup = document.getElementById('btn-save-group-overrides');
+  if (btnSaveGroup) btnSaveGroup.addEventListener('click', saveGroupOverrides);
+
+  const btnClearGroup = document.getElementById('btn-clear-group-overrides');
+  if (btnClearGroup) btnClearGroup.addEventListener('click', async () => {
+    if (!editingChatId) return;
+    try {
+      await api(`/api/chats/${editingChatId}/overrides`, { method: 'DELETE' });
+      showToast('Group now follows global rules.', 'success');
+      groupEditor.classList.add('hidden');
+      editingChatId = null;
+      loadChats();
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('Network error.', 'error');
+    }
+  });
+
+  const btnCloseGroup = document.getElementById('btn-close-group-editor');
+  if (btnCloseGroup) btnCloseGroup.addEventListener('click', () => {
+    groupEditor.classList.add('hidden');
+    editingChatId = null;
+  });
+
+  const btnRefreshChats = document.getElementById('btn-refresh-chats');
+  if (btnRefreshChats) btnRefreshChats.addEventListener('click', async () => {
+    btnRefreshChats.disabled = true;
+    const original = btnRefreshChats.innerHTML;
+    btnRefreshChats.innerHTML = '<i class="fa-solid fa-rotate fa-spin"></i> Refreshing…';
+    try {
+      const r = await api('/api/chats/refresh', { method: 'POST' });
+      const j = await r.json();
+      if (j.success) {
+        showToast('Groups refreshed from Telegram.', 'success');
+        loadChats();
+      } else showToast(j.error || 'Refresh failed.', 'error');
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('Network error.', 'error');
+    } finally {
+      btnRefreshChats.disabled = false;
+      btnRefreshChats.innerHTML = original;
+    }
+  });
+
   // -------- Multi-bot manager --------
   async function loadBots() {
     if (!botsTbody) return;
@@ -1533,9 +1780,14 @@ document.addEventListener('DOMContentLoaded', () => {
           ? '<span class="item-badge" style="background:rgba(0,200,0,0.2);color:#16a34a">Online</span>'
           : '<span class="item-badge yellow-bg">Offline</span>';
         const handle = b.username ? `@${b.username}` : (b.first_name || '(awaiting…)') ;
+        // Privacy Mode ON means Telegram hides most group messages from the bot —
+        // the single biggest reason moderation appears to "do nothing".
+        const privacyWarn = (b.online && b.canReadAllMessages === false)
+          ? ` <span class="item-badge red-bg" title="Privacy Mode is ON: Telegram hides most group messages from this bot. Fix in @BotFather → Bot Settings → Group Privacy → Turn OFF, then remove and re-add the bot to your groups.">⚠ privacy mode</span>`
+          : '';
         tr.innerHTML = `
           <td><code>${b.id}</code></td>
-          <td><strong>${handle}</strong></td>
+          <td><strong>${handle}</strong>${privacyWarn}</td>
           <td>${b.name || '<span class="text-muted">—</span>'}</td>
           <td>${statusBadge}</td>
           <td>${addedAt}</td>
@@ -1639,7 +1891,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setFieldValue(ruleSpamAction, "warn");
 
       setFieldChecked(ruleLinkEnabled, true);
-      setFieldChecked(ruleLinkAdmin, false);
+
       setFieldChecked(ruleLinkStrict, false);
       setFieldChecked(ruleLinkEnforceAdmins, false);
       setFieldValue(ruleLinkAction, "delete");
@@ -1717,7 +1969,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setFieldValue(ruleSpamAction, "warn");
 
       setFieldChecked(ruleLinkEnabled, true);
-      setFieldChecked(ruleLinkAdmin, false);
+
       setFieldChecked(ruleLinkStrict, true);
       setFieldChecked(ruleLinkEnforceAdmins, true);
       setFieldValue(ruleLinkAction, "delete_and_warn");
@@ -1823,7 +2075,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setFieldValue(ruleSpamAction, "mute");
 
       setFieldChecked(ruleLinkEnabled, true);
-      setFieldChecked(ruleLinkAdmin, true);
+
       setFieldChecked(ruleLinkStrict, true);
       setFieldChecked(ruleLinkEnforceAdmins, true);
       setFieldValue(ruleLinkAction, "ban");

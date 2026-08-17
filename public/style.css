@@ -1556,3 +1556,16 @@ select {
 .routine-card:last-child {
   grid-column: span 2;
 }
+
+/* Sidebar count badge (Groups) */
+.menu-badge {
+  margin-left: auto;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  min-width: 20px;
+  text-align: center;
+}
