@@ -10,3 +10,9 @@ db/
 *.log
 .DS_Store
 logs/
+
+# SSH private keys - NEVER commit
+*.key
+*.pem
+!*.key.pub
+octogod.key.pub

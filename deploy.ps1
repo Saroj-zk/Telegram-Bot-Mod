@@ -12,7 +12,7 @@ param(
   [string]$Message = "Update bot"
 )
 
-$KEY = ".\ssh-key-2026-08-17.key"
+$KEY = ".\octogod.key"
 $VM  = "ubuntu@68.233.98.16"
 
 Write-Host ""

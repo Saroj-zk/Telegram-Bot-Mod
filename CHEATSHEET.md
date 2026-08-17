@@ -6,7 +6,7 @@ Your bot runs on an Oracle Cloud VM, 24/7. This card covers everyday tasks.
 |---|---|
 | VM address | `68.233.98.16` |
 | SSH user | `ubuntu` |
-| Key file | `ssh-key-2026-08-17.key` (in this folder — **back it up!**) |
+| Key file | `octogod.key` (in this folder — **back it up!**) |
 | Dashboard login | `saroj` |
 
 **Use PowerShell, not CMD.** Open it inside this folder: Shift + right-click in
@@ -18,14 +18,14 @@ File Explorer → *Open PowerShell window here*.
 
 ### Open the dashboard
 ```powershell
-ssh -i .\ssh-key-2026-08-17.key -L 3000:127.0.0.1:3000 ubuntu@68.233.98.16
+ssh -i .\octogod.key -L 3000:127.0.0.1:3000 ubuntu@68.233.98.16
 ```
 Leave the window open, then browse to <http://127.0.0.1:3000>.
 Closing the window closes the dashboard.
 
 ### Log in to the server
 ```powershell
-ssh -i .\ssh-key-2026-08-17.key ubuntu@68.233.98.16
+ssh -i .\octogod.key ubuntu@68.233.98.16
 ```
 Type `exit` to return to your PC.
 
@@ -81,7 +81,7 @@ Type `exit` to return to your PC.
 | Symptom | Fix |
 |---|---|
 | Dashboard won't load | The SSH tunnel window must stay open. |
-| `UNPROTECTED PRIVATE KEY FILE` | `icacls .\ssh-key-2026-08-17.key /inheritance:r /grant:r "$($env:USERNAME):(R)"` |
+| `UNPROTECTED PRIVATE KEY FILE` | `icacls .\octogod.key /inheritance:r /grant:r "$($env:USERNAME):(R)"` |
 | `409 Conflict` in logs | A second copy is running somewhere — stop it. |
 | Bot sees no messages | Privacy Mode got re-enabled: @BotFather → Bot Settings → Group Privacy → Turn **off**, then remove & re-add the bot to each group. |
 | "Could not delete/ban" | The bot isn't an admin in that group, or lacks *Delete Messages* / *Ban Users*. |
