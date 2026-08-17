@@ -161,7 +161,14 @@
           <h2 id="current-tab-title">Overview Dashboard</h2>
           <p id="current-tab-desc">Monitor your Telegram community health and stats.</p>
         </div>
-        
+
+        <!-- Global user lookup: find anyone by @name or ID and act on them -->
+        <div class="global-search-wrap">
+          <input type="text" id="global-user-search" class="global-search"
+                 placeholder="🔍 Find a user by @name or ID…" autocomplete="off">
+          <div class="global-search-results hidden" id="global-search-results"></div>
+        </div>
+
         <div class="header-actions">
           <button class="btn btn-secondary btn-icon-only" id="theme-toggle" title="Toggle Theme">
             <i class="fa-solid fa-moon"></i>
@@ -1646,11 +1653,11 @@ SexyStickers"></textarea>
             <table class="data-table" id="table-warnings">
               <thead>
                 <tr>
-                  <th>User</th>
-                  <th>Group</th>
-                  <th>Warns</th>
-                  <th>Last Offence</th>
-                  <th>When</th>
+                  <th data-sort="username">User</th>
+                  <th data-sort="chatTitle">Group</th>
+                  <th data-sort="count">Warns</th>
+                  <th data-sort="lastReason">Last Offence</th>
+                  <th data-sort="lastAt">When</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -1679,11 +1686,11 @@ SexyStickers"></textarea>
             <table class="data-table" id="table-bans">
               <thead>
                 <tr>
-                  <th>User</th>
-                  <th>Group</th>
-                  <th>Banned At</th>
-                  <th>Reason</th>
-                  <th>Status</th>
+                  <th data-sort="username">User</th>
+                  <th data-sort="groups">Group</th>
+                  <th data-sort="lastBannedAt">Banned</th>
+                  <th data-sort="lastReason">Reason</th>
+                  <th data-sort="banCount">Status</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -1813,6 +1820,53 @@ SexyStickers"></textarea>
   </div>
 
   <!-- TOAST NOTIFICATIONS -->
+  <!-- USER DETAIL / ACTION PANEL (opened from the global search) -->
+  <div id="user-modal" class="modal-overlay hidden">
+    <div class="user-modal-card glass">
+      <div class="user-modal-head">
+        <div>
+          <h2 id="um-name">@user</h2>
+          <code class="text-muted" id="um-id">0</code>
+        </div>
+        <button class="btn btn-secondary btn-icon-only" id="um-close" title="Close">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="um-stats">
+        <div class="um-stat"><span class="um-stat-label">Warnings</span><strong id="um-warns">0/3</strong></div>
+        <div class="um-stat"><span class="um-stat-label">Times banned</span><strong id="um-bans">0</strong></div>
+        <div class="um-stat"><span class="um-stat-label">Times muted</span><strong id="um-mutes">0</strong></div>
+        <div class="um-stat"><span class="um-stat-label">Status</span><strong id="um-status">—</strong></div>
+      </div>
+
+      <div class="input-group">
+        <label for="um-scope">Apply actions to</label>
+        <select id="um-scope"><option value="">All groups the bot is in</option></select>
+      </div>
+
+      <div class="um-actions">
+        <button class="btn btn-danger" id="um-ban"><i class="fa-solid fa-gavel"></i> Ban</button>
+        <button class="btn btn-secondary" id="um-unban"><i class="fa-solid fa-unlock"></i> Unban</button>
+        <button class="btn btn-secondary" id="um-kick"><i class="fa-solid fa-user-slash"></i> Kick</button>
+        <button class="btn btn-secondary" id="um-mute"><i class="fa-solid fa-volume-xmark"></i> Mute</button>
+        <select id="um-mute-mins" class="table-filter" style="max-width:130px">
+          <option value="30">30 min</option>
+          <option value="60" selected>1 hour</option>
+          <option value="720">12 hours</option>
+          <option value="1440">1 day</option>
+          <option value="10080">1 week</option>
+        </select>
+        <button class="btn btn-outline" id="um-reset"><i class="fa-solid fa-rotate-left"></i> Reset warnings</button>
+      </div>
+
+      <div class="um-history">
+        <h4>History</h4>
+        <div id="um-history-body"><p class="text-muted">No records.</p></div>
+      </div>
+    </div>
+  </div>
+
   <div id="toast-container"></div>
 
   <!-- Client JavaScripts -->

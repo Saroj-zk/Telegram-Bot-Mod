@@ -3172,6 +3172,69 @@ async function banUserFromDashboard(userId, chatId) {
   return { ok: true, message: `Banned in ${title}.` };
 }
 
+// Mute a user for N minutes. No chatId = every known group.
+async function muteUserFromDashboard(userId, chatId, minutes) {
+  const tg = anyBot();
+  if (!tg) return { ok: false, error: 'bot_not_running' };
+  const uid = Number(userId);
+  if (!uid || isNaN(uid)) return { ok: false, error: 'invalid_user_id' };
+  const mins = Math.max(1, Math.min(parseInt(minutes, 10) || 60, 43200)); // 1 min .. 30 days
+
+  const targets = chatId ? [String(chatId)] : Object.keys(config.getKnownChats());
+  if (!targets.length) return { ok: false, error: 'no_known_chats' };
+
+  let ok = 0;
+  const errors = [];
+  for (const cid of targets) {
+    try {
+      await tg.telegram.restrictChatMember(cid, uid, {
+        permissions: zeroPermissions(),
+        until_date: Math.floor(Date.now() / 1000) + mins * 60
+      });
+      ok++;
+    } catch (e) { errors.push((e && e.message) || 'error'); }
+    await new Promise(r => setTimeout(r, 50));
+  }
+  if (!ok) {
+    const why = /CHAT_ADMIN_REQUIRED|not enough rights/i.test(errors.join(' '))
+      ? 'the bot needs to be an admin there with "Restrict Members"'
+      : errors[0] || 'unknown error';
+    return { ok: false, error: `Could not mute: ${why}` };
+  }
+  config.addMute(uid, null, mins, 'Muted from dashboard');
+  return { ok: true, message: `Muted for ${mins} minute(s) in ${ok} group(s).` };
+}
+
+// Kick = ban then immediately unban, so they can rejoin later.
+async function kickUserFromDashboard(userId, chatId) {
+  const tg = anyBot();
+  if (!tg) return { ok: false, error: 'bot_not_running' };
+  const uid = Number(userId);
+  if (!uid || isNaN(uid)) return { ok: false, error: 'invalid_user_id' };
+
+  const targets = chatId ? [String(chatId)] : Object.keys(config.getKnownChats());
+  if (!targets.length) return { ok: false, error: 'no_known_chats' };
+
+  let ok = 0;
+  const errors = [];
+  for (const cid of targets) {
+    try {
+      await tg.telegram.banChatMember(cid, uid);
+      await tg.telegram.unbanChatMember(cid, uid);
+      ok++;
+    } catch (e) { errors.push((e && e.message) || 'error'); }
+    await new Promise(r => setTimeout(r, 50));
+  }
+  if (!ok) {
+    const why = /CHAT_ADMIN_REQUIRED|not enough rights/i.test(errors.join(' '))
+      ? 'the bot needs to be an admin there with "Ban Users"'
+      : errors[0] || 'unknown error';
+    return { ok: false, error: `Could not kick: ${why}` };
+  }
+  config.logEvent('KICK', `👢 Kicked user ${uid} from ${ok} group(s) via the dashboard.`);
+  return { ok: true, message: `Kicked from ${ok} group(s). They can rejoin.` };
+}
+
 module.exports = {
   initBot,
   stopBot,
@@ -3179,6 +3242,8 @@ module.exports = {
   listBots,
   unbanUser,
   banUserFromDashboard,
+  muteUserFromDashboard,
+  kickUserFromDashboard,
   runRoutineScan,
   registerScanProgress,
   refreshChats

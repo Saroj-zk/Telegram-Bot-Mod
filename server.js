@@ -389,20 +389,123 @@ app.get('/api/data', requireAuth, (req, res) => {
     };
   }).sort((a, b) => new Date(b.lastAt || 0) - new Date(a.lastAt || 0));
 
-  // Newest ban first, with the group name resolved.
-  const bansList = (currentData.bans || []).map(b => ({
+  // Raw ban rows (newest first) with the group name resolved.
+  const bansRaw = (currentData.bans || []).map(b => ({
     ...b,
     chatTitle: b.chatTitle || chatName(b.chatId),
     active: b.active !== false
   })).sort((a, b) => new Date(b.bannedAt || 0) - new Date(a.bannedAt || 0));
 
+  // Consolidated: ONE row per user. A repeat offender banned five times should
+  // read as "banned 5x", not fill five rows of the table.
+  const byUser = new Map();
+  for (const b of bansRaw) {
+    const key = String(b.userId);
+    if (!byUser.has(key)) {
+      byUser.set(key, {
+        userId: b.userId,
+        username: b.username,
+        banCount: 0,
+        active: false,
+        groups: new Set(),
+        lastBannedAt: null,
+        lastReason: null,
+        lastChatId: null,
+        history: []
+      });
+    }
+    const u = byUser.get(key);
+    u.banCount++;
+    if (b.active) u.active = true;                    // still banned anywhere?
+    if (b.chatTitle) u.groups.add(b.chatTitle);
+    if (!u.lastBannedAt) {                            // list is newest-first
+      u.lastBannedAt = b.bannedAt;
+      u.lastReason = b.reason;
+      u.lastChatId = b.chatId;
+    }
+    if (b.username && String(b.username).indexOf('User_') !== 0) u.username = b.username;
+    if (u.history.length < 10) {
+      u.history.push({ bannedAt: b.bannedAt, reason: b.reason, chatTitle: b.chatTitle, active: b.active });
+    }
+  }
+  const bansList = [...byUser.values()]
+    .map(u => ({ ...u, groups: [...u.groups] }))
+    .sort((a, b) => new Date(b.lastBannedAt || 0) - new Date(a.lastBannedAt || 0));
+
   res.json({
     stats: currentData.stats,
     warnings: currentData.warnings,   // kept for backwards compatibility
     warningsList,
-    bans: bansList,
+    bans: bansList,        // consolidated, one row per user
+    bansRaw,               // every individual ban event
     mutes: currentData.mutes
   });
+});
+
+// -------- User lookup: everything known about one person, in one place --------
+function buildUserRecord(userId) {
+  const d = config.loadData();
+  const chats = config.getKnownChats();
+  const uid = String(userId);
+  const chatName = (id) => (chats[String(id)] || {}).title || null;
+
+  const w = (d.warnings || {})[uid];
+  const bans = (d.bans || []).filter(b => String(b.userId) === uid)
+    .map(b => ({ ...b, chatTitle: b.chatTitle || chatName(b.chatId) }))
+    .sort((a, b) => new Date(b.bannedAt || 0) - new Date(a.bannedAt || 0));
+  const mutes = (d.mutes || []).filter(m => String(m.userId) === uid)
+    .sort((a, b) => new Date(b.mutedAt || 0) - new Date(a.mutedAt || 0));
+
+  if (!w && !bans.length && !mutes.length) return null;
+
+  const groups = [...new Set([
+    ...(w && w.chatTitle ? [w.chatTitle] : []),
+    ...bans.map(b => b.chatTitle).filter(Boolean)
+  ])];
+
+  return {
+    userId: uid,
+    username: (w && w.username) || (bans[0] && bans[0].username) || `User_${uid}`,
+    warnings: w ? w.count : 0,
+    warningHistory: w ? (w.reasons || []).slice(-10).reverse() : [],
+    lastWarnAt: w ? w.lastAt : null,
+    banCount: bans.length,
+    currentlyBanned: bans.some(b => b.active !== false),
+    bans,
+    muteCount: mutes.length,
+    mutes: mutes.slice(0, 10),
+    groups,
+    lastChatId: (bans[0] && bans[0].chatId) || (w && w.chatId) || null
+  };
+}
+
+// Search users across warnings, bans and mutes by name or id.
+app.get('/api/users/search', requireAuth, (req, res) => {
+  const q = String(req.query.q || '').toLowerCase().trim().replace(/^@/, '');
+  if (!q || q.length < 2) return res.json({ results: [] });
+
+  const d = config.loadData();
+  const ids = new Set();
+  Object.entries(d.warnings || {}).forEach(([id, w]) => {
+    if (id.includes(q) || String(w.username || '').toLowerCase().includes(q)) ids.add(id);
+  });
+  (d.bans || []).forEach(b => {
+    if (String(b.userId).includes(q) || String(b.username || '').toLowerCase().includes(q)) ids.add(String(b.userId));
+  });
+  (d.mutes || []).forEach(m => {
+    if (String(m.userId).includes(q) || String(m.username || '').toLowerCase().includes(q)) ids.add(String(m.userId));
+  });
+
+  const results = [...ids].slice(0, 25).map(buildUserRecord).filter(Boolean);
+  res.json({ results });
+});
+
+app.get('/api/users/:id', requireAuth, (req, res) => {
+  const id = String(req.params.id || '').replace(/[^0-9]/g, '');
+  if (!id) return res.status(400).json({ error: 'invalid_user_id' });
+  const rec = buildUserRecord(id);
+  if (!rec) return res.status(404).json({ error: 'not_found' });
+  res.json(rec);
 });
 
 const TOKEN_FORMAT_RE = /^\d{6,12}:[A-Za-z0-9_-]{30,60}$/;
@@ -524,6 +627,35 @@ app.post('/api/action/ban', requireAuth, async (req, res) => {
   if (!userId || isNaN(userId)) return res.status(400).json({ success: false, error: 'invalid_user_id' });
   try {
     const r = await bot.banUserFromDashboard(userId, chatId);
+    if (!r.ok) return res.status(400).json({ success: false, error: r.error });
+    io.emit('data_update');
+    res.json({ success: true, message: r.message });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/action/mute', requireAuth, async (req, res) => {
+  const userId = parseInt(req.body && req.body.userId, 10);
+  const chatId = req.body && req.body.chatId ? String(req.body.chatId) : null;
+  const minutes = req.body && req.body.minutes;
+  if (!userId || isNaN(userId)) return res.status(400).json({ success: false, error: 'invalid_user_id' });
+  try {
+    const r = await bot.muteUserFromDashboard(userId, chatId, minutes);
+    if (!r.ok) return res.status(400).json({ success: false, error: r.error });
+    io.emit('data_update');
+    res.json({ success: true, message: r.message });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/action/kick', requireAuth, async (req, res) => {
+  const userId = parseInt(req.body && req.body.userId, 10);
+  const chatId = req.body && req.body.chatId ? String(req.body.chatId) : null;
+  if (!userId || isNaN(userId)) return res.status(400).json({ success: false, error: 'invalid_user_id' });
+  try {
+    const r = await bot.kickUserFromDashboard(userId, chatId);
     if (!r.ok) return res.status(400).json({ success: false, error: r.error });
     io.emit('data_update');
     res.json({ success: true, message: r.message });

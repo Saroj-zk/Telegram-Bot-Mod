@@ -1461,13 +1461,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const grp = warnGroupFilter ? warnGroupFilter.value : '';
     const lvl = warnLevelFilter ? warnLevelFilter.value : '';
 
-    const rows = warningsCache.filter(w => {
+    let rows = warningsCache.filter(w => {
       if (grp && (w.chatTitle || '') !== grp) return false;
       if (lvl && String(w.count) !== lvl) return false;
       if (!q) return true;
       return [w.username, w.userId, w.chatTitle, w.lastReason]
         .filter(Boolean).join(' ').toLowerCase().includes(q);
     });
+    rows = sortRows(rows, warnSort);
 
     if (warnCountBadge) warnCountBadge.textContent = rows.length;
     if (!rows.length) {
@@ -1476,7 +1477,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     warningsTbody.innerHTML = rows.map(w => {
-      const uname = w.username && !String(w.username).startsWith('User_') ? '@' + w.username : `User ${w.userId}`;
+      // The ID is already on the second line, so don't repeat it as the name.
+      const uname = w.username && !String(w.username).startsWith('User_')
+        ? '@' + w.username : 'No username';
       const sev = w.count >= 2 ? 'red-bg' : 'yellow-bg';
       return `<tr>
         <td><strong>${escapeHtml(uname)}</strong><br><code class="text-muted">${w.userId}</code></td>
@@ -1491,16 +1494,21 @@ document.addEventListener('DOMContentLoaded', () => {
           <button class="btn btn-danger btn-small warn-ban-btn" data-id="${w.userId}" data-chat="${w.chatId || ''}" title="Ban this user now">
             <i class="fa-solid fa-gavel"></i> Ban
           </button>
+          <button class="btn btn-outline btn-small user-detail-btn" data-id="${w.userId}" title="Open full user record (ban / mute / kick)">
+            <i class="fa-solid fa-id-card"></i>
+          </button>
         </td>
       </tr>`;
     }).join('');
 
-    document.querySelectorAll('.clear-warns-btn').forEach(b =>
+    document.querySelectorAll('#warnings-tbody .clear-warns-btn').forEach(b =>
       b.addEventListener('click', () => triggerClearWarnings(b.dataset.id)));
-    document.querySelectorAll('.warn-ban-btn').forEach(b =>
+    document.querySelectorAll('#warnings-tbody .warn-ban-btn').forEach(b =>
       b.addEventListener('click', () => {
         if (confirm('Ban this user from the group?')) triggerBanUser(b.dataset.id, b.dataset.chat);
       }));
+    document.querySelectorAll('#warnings-tbody .user-detail-btn').forEach(b =>
+      b.addEventListener('click', () => openUserModal(b.dataset.id)));
   }
 
   function renderBans() {
@@ -1509,14 +1517,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const grp = banGroupFilter ? banGroupFilter.value : '';
     const status = banStatusFilter ? banStatusFilter.value : 'active';
 
-    const rows = bansCache.filter(b => {
+    let rows = bansCache.filter(b => {
       if (status === 'active' && !b.active) return false;
       if (status === 'unbanned' && b.active) return false;
-      if (grp && (b.chatTitle || '') !== grp) return false;
+      if (grp && !(b.groups || []).includes(grp)) return false;
       if (!q) return true;
-      return [b.username, b.userId, b.chatTitle, b.reason]
+      return [b.username, b.userId, (b.groups || []).join(' '), b.lastReason]
         .filter(Boolean).join(' ').toLowerCase().includes(q);
     });
+    rows = sortRows(rows, banSort);
 
     if (banCountBadge) banCountBadge.textContent = rows.length;
     if (!rows.length) {
@@ -1525,30 +1534,245 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     bansTbody.innerHTML = rows.map(b => {
-      const uname = b.username && !String(b.username).startsWith('User_') ? '@' + b.username : `User ${b.userId}`;
+      // The ID is already on the second line, so don't repeat it as the name.
+      const uname = b.username && !String(b.username).startsWith('User_')
+        ? '@' + b.username : 'No username';
       const status = b.active
         ? '<span class="item-badge red-bg">Banned</span>'
         : '<span class="item-badge yellow-bg">Unbanned</span>';
+      // Repeat offenders read as "banned 5x" rather than five separate rows.
+      const repeat = b.banCount > 1
+        ? ` <span class="item-badge red-bg" title="Banned ${b.banCount} times">${b.banCount}×</span>` : '';
+      const groups = (b.groups || []).length
+        ? (b.groups.length > 1
+            ? `<span title="${escapeHtml(b.groups.join(', '))}">${escapeHtml(b.groups[0])} +${b.groups.length - 1}</span>`
+            : escapeHtml(b.groups[0]))
+        : '<span class="text-muted">—</span>';
       const action = b.active
-        ? `<button class="btn btn-secondary btn-small unban-btn" data-id="${b.userId}" data-chat="${b.chatId || ''}">
+        ? `<button class="btn btn-secondary btn-small unban-btn" data-id="${b.userId}" data-chat="${b.lastChatId || ''}">
              <i class="fa-solid fa-unlock"></i> Unban</button>`
-        : `<span class="text-muted">—</span>`;
+        : '';
       return `<tr>
-        <td><strong>${escapeHtml(uname)}</strong><br><code class="text-muted">${b.userId}</code></td>
-        <td>${b.chatTitle ? escapeHtml(b.chatTitle) : '<span class="text-muted">—</span>'}</td>
-        <td><span title="${fullTime(b.bannedAt)}">${relativeTime(b.bannedAt)}</span></td>
-        <td>${escapeHtml(b.reason || '—')}</td>
+        <td><strong>${escapeHtml(uname)}</strong>${repeat}<br><code class="text-muted">${b.userId}</code></td>
+        <td>${groups}</td>
+        <td><span title="${fullTime(b.lastBannedAt)}">${relativeTime(b.lastBannedAt)}</span></td>
+        <td>${escapeHtml(b.lastReason || '—')}</td>
         <td>${status}</td>
-        <td>${action}</td>
+        <td>${action}
+          <button class="btn btn-outline btn-small user-detail-btn" data-id="${b.userId}" title="Open full user record">
+            <i class="fa-solid fa-id-card"></i>
+          </button></td>
       </tr>`;
     }).join('');
 
-    document.querySelectorAll('.unban-btn').forEach(btn =>
+    document.querySelectorAll('#bans-tbody .unban-btn').forEach(btn =>
       btn.addEventListener('click', () => {
         const chatId = btn.dataset.chat ? Number(btn.dataset.chat) : null;
         triggerUnban(btn.dataset.id, chatId);
       }));
+    document.querySelectorAll('#bans-tbody .user-detail-btn').forEach(btn =>
+      btn.addEventListener('click', () => openUserModal(btn.dataset.id)));
   }
+
+  // ---- Click-to-sort table headers ----
+  // Each table keeps { key, dir }. Clicking the same header flips direction.
+  let warnSort = { key: 'lastAt', dir: 'desc' };
+  let banSort  = { key: 'lastBannedAt', dir: 'desc' };
+
+  function sortRows(rows, state) {
+    if (!state || !state.key) return rows;
+    const dir = state.dir === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      let x = a[state.key], y = b[state.key];
+      if (state.key === 'groups') { x = (x || [])[0] || ''; y = (y || [])[0] || ''; }
+      // Dates compare numerically; everything else as lower-cased text/number.
+      if (/At$/.test(state.key)) { x = new Date(x || 0).getTime(); y = new Date(y || 0).getTime(); }
+      else if (typeof x === 'string' || typeof y === 'string') {
+        x = String(x == null ? '' : x).toLowerCase();
+        y = String(y == null ? '' : y).toLowerCase();
+      } else { x = x || 0; y = y || 0; }
+      if (x < y) return -1 * dir;
+      if (x > y) return 1 * dir;
+      return 0;
+    });
+  }
+
+  // Wire <th data-sort="key"> headers to their table's sort state.
+  function makeSortable(tableId, getState, setState, rerender) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    table.querySelectorAll('th[data-sort]').forEach(th => {
+      th.classList.add('sortable-th');
+      // Mark the column the table is already sorted by so the arrow isn't a lie.
+      if (th.dataset.sort === getState().key) th.setAttribute('data-dir', getState().dir);
+      th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        const s = getState();
+        setState({ key, dir: (s.key === key && s.dir === 'desc') ? 'asc' : 'desc' });
+        table.querySelectorAll('th[data-sort]').forEach(o => o.removeAttribute('data-dir'));
+        th.setAttribute('data-dir', getState().dir);
+        rerender();
+      });
+    });
+  }
+  makeSortable('table-warnings', () => warnSort, s => { warnSort = s; }, () => renderWarnings());
+  makeSortable('table-bans', () => banSort, s => { banSort = s; }, () => renderBans());
+
+  // ================= Global user lookup =================
+  const globalSearch = document.getElementById('global-user-search');
+  const globalResults = document.getElementById('global-search-results');
+  const userModal = document.getElementById('user-modal');
+  let umUserId = null;
+
+  function closeUserModal() {
+    if (userModal) userModal.classList.add('hidden');
+    umUserId = null;
+  }
+  const umClose = document.getElementById('um-close');
+  if (umClose) umClose.addEventListener('click', closeUserModal);
+  if (userModal) userModal.addEventListener('click', (e) => {
+    if (e.target === userModal) closeUserModal();   // click the backdrop to dismiss
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closeUserModal(); if (globalResults) globalResults.classList.add('hidden'); }
+  });
+
+  async function openUserModal(userId, keepScope) {
+    try {
+      const r = await api('/api/users/' + userId);
+      const u = await r.json();
+      umUserId = u.userId;
+
+      const uname = u.username && !String(u.username).startsWith('User_') ? '@' + u.username : 'No username';
+      document.getElementById('um-name').textContent = uname;
+      document.getElementById('um-id').textContent = 'ID ' + u.userId;
+      document.getElementById('um-warns').textContent = `${u.warnings}/3`;
+      document.getElementById('um-bans').textContent = u.banCount;
+      document.getElementById('um-mutes').textContent = u.muteCount;
+      const st = document.getElementById('um-status');
+      st.textContent = u.currentlyBanned ? 'BANNED' : 'Active';
+      st.style.color = u.currentlyBanned ? 'var(--color-red)' : 'var(--color-green)';
+
+      // Scope dropdown: all groups, or one specific group.
+      // Rebuilding the options wipes the selection, so keep whatever the admin
+      // picked — otherwise a refresh after one action silently re-narrows the
+      // next action to a single group.
+      const scope = document.getElementById('um-scope');
+      const previous = keepScope ? scope.value : null;
+      const groupOpts = chatsCache.length
+        ? chatsCache.map(c => `<option value="${c.id}">${escapeHtml(c.title || c.id)}</option>`).join('')
+        : '';
+      scope.innerHTML = '<option value="">All groups the bot is in</option>' + groupOpts;
+      if (previous !== null) scope.value = previous;
+      else if (u.lastChatId) scope.value = String(u.lastChatId);
+
+      // History: warnings + bans + mutes, newest first
+      const items = [];
+      (u.warningHistory || []).forEach(h => items.push({
+        t: h.timestamp, kind: 'WARNING', txt: h.reason, grp: h.chatTitle
+      }));
+      (u.bans || []).forEach(b => items.push({
+        t: b.bannedAt, kind: b.active === false ? 'UNBANNED' : 'BAN', txt: b.reason, grp: b.chatTitle
+      }));
+      (u.mutes || []).forEach(m => items.push({
+        t: m.mutedAt, kind: 'MUTE', txt: m.reason, grp: null
+      }));
+      items.sort((a, b) => new Date(b.t || 0) - new Date(a.t || 0));
+
+      document.getElementById('um-history-body').innerHTML = items.length
+        ? items.slice(0, 20).map(i => `
+            <div class="um-hist-row">
+              <span class="item-badge ${badgeFor(i.kind === 'UNBANNED' ? 'UNBAN' : i.kind)}">${i.kind}</span>
+              <span class="um-hist-txt">${escapeHtml(i.txt || '—')}</span>
+              <span class="text-muted um-hist-meta">${i.grp ? escapeHtml(i.grp) + ' · ' : ''}${relativeTime(i.t)}</span>
+            </div>`).join('')
+        : '<p class="text-muted">No records.</p>';
+
+      userModal.classList.remove('hidden');
+      if (globalResults) globalResults.classList.add('hidden');
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('Could not load that user.', 'error');
+    }
+  }
+
+  // Debounced type-ahead search
+  let searchTimer = null;
+  if (globalSearch) {
+    globalSearch.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      const q = globalSearch.value.trim();
+      if (q.length < 2) { globalResults.classList.add('hidden'); return; }
+      searchTimer = setTimeout(async () => {
+        try {
+          const r = await api('/api/users/search?q=' + encodeURIComponent(q));
+          const { results } = await r.json();
+          if (!results.length) {
+            globalResults.innerHTML = '<div class="gs-empty">No user found. They must have been warned, muted or banned at least once.</div>';
+          } else {
+            globalResults.innerHTML = results.map(u => {
+              const uname = u.username && !String(u.username).startsWith('User_') ? '@' + u.username : `User ${u.userId}`;
+              const tags = [
+                u.warnings ? `<span class="item-badge yellow-bg">${u.warnings}/3 warns</span>` : '',
+                u.banCount ? `<span class="item-badge red-bg">banned ${u.banCount}x</span>` : '',
+                u.currentlyBanned ? '<span class="item-badge red-bg">ACTIVE BAN</span>' : ''
+              ].filter(Boolean).join(' ');
+              return `<div class="gs-row" data-id="${u.userId}">
+                        <div><strong>${escapeHtml(uname)}</strong>
+                             <code class="text-muted">${u.userId}</code></div>
+                        <div>${tags}</div>
+                      </div>`;
+            }).join('');
+            globalResults.querySelectorAll('.gs-row').forEach(row =>
+              row.addEventListener('click', () => openUserModal(row.dataset.id)));
+          }
+          globalResults.classList.remove('hidden');
+        } catch (e) { /* ignore transient search errors */ }
+      }, 250);
+    });
+    document.addEventListener('click', (e) => {
+      if (globalResults && !globalResults.contains(e.target) && e.target !== globalSearch) {
+        globalResults.classList.add('hidden');
+      }
+    });
+  }
+
+  // Modal action buttons
+  async function umAction(endpoint, extra, confirmMsg) {
+    if (!umUserId) return;
+    if (confirmMsg && !confirm(confirmMsg)) return;
+    const scope = document.getElementById('um-scope').value;
+    try {
+      const r = await api('/api/action/' + endpoint, {
+        method: 'POST',
+        body: Object.assign({ userId: umUserId, chatId: scope || undefined }, extra || {})
+      });
+      const j = await r.json();
+      if (j.success) {
+        showToast(j.message || 'Done.', 'success');
+        openUserModal(umUserId, true);   // refresh, keeping the chosen scope
+        loadModData();
+      } else showToast(j.error || 'Action failed.', 'error');
+    } catch (e) {
+      if (e.message !== 'unauthorized') showToast('Network error.', 'error');
+    }
+  }
+  const umBan = document.getElementById('um-ban');
+  if (umBan) umBan.addEventListener('click', () => umAction('ban', null, 'Ban this user?'));
+  const umUnban = document.getElementById('um-unban');
+  if (umUnban) umUnban.addEventListener('click', () => umAction('unban'));
+  const umKick = document.getElementById('um-kick');
+  if (umKick) umKick.addEventListener('click', () => umAction('kick', null, 'Kick this user? They can rejoin.'));
+  const umMute = document.getElementById('um-mute');
+  if (umMute) umMute.addEventListener('click', () => {
+    const mins = Number(document.getElementById('um-mute-mins').value);
+    umAction('mute', { minutes: mins > 0 ? mins : 60 });   // fall back to 1 hour
+  });
+  const umReset = document.getElementById('um-reset');
+  if (umReset) umReset.addEventListener('click', async () => {
+    if (!umUserId) return;
+    await triggerClearWarnings(umUserId);
+    openUserModal(umUserId, true);
+  });
 
   async function triggerBanUser(userId, chatId) {
     try {
