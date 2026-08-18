@@ -385,12 +385,25 @@
               <h3><i class="fa-solid fa-user-tie"></i> Do these rules apply to your admins?</h3>
             </div>
             <div class="rules-card-body">
-              <p class="input-hint" style="margin-bottom:14px">
-                Group admins are <strong>trusted by default</strong> — they can post links, polls, media and custom emoji without being filtered.
-                Tick a box below only if you want that rule to apply to admins as well.
-                Everything not listed here (spam/flood limits, captcha, forwards, mentions) <strong>never</strong> applies to admins.
-              </p>
-              <div class="input-group-row">
+              <label class="checkbox-container master-exempt">
+                <input type="checkbox" id="adm-exempt-all" checked>
+                <span class="checkmark"></span>
+                <span>
+                  <strong>Never moderate admins or the group owner</strong>
+                  <span class="input-hint">
+                    Recommended. Nothing the bot does — deleting, warning, muting, banning, captcha,
+                    chat lock — is ever applied to someone with admin rights.
+                  </span>
+                </span>
+              </label>
+
+              <div id="adm-per-rule" class="adm-per-rule">
+                <p class="input-hint" style="margin-bottom:14px">
+                  Turn the switch above off to choose rule by rule. A ticked box means that rule
+                  <strong>does</strong> apply to admins. Anything not listed (spam/flood limits, captcha,
+                  forwards, mentions) never applies to them.
+                </p>
+                <div class="input-group-row">
                 <div class="input-group checkbox-group">
                   <label class="checkbox-container">
                     <input type="checkbox" id="adm-link">
@@ -430,6 +443,7 @@
                     Adult emoji (🔞 🍑 💦)
                   </label>
                   <span class="input-hint">Recommended ON.</span>
+                </div>
                 </div>
               </div>
             </div>
@@ -1849,20 +1863,22 @@ SexyStickers"></textarea>
         <button class="btn btn-danger" id="um-ban"><i class="fa-solid fa-gavel"></i> Ban</button>
         <button class="btn btn-secondary" id="um-unban"><i class="fa-solid fa-unlock"></i> Unban</button>
         <button class="btn btn-secondary" id="um-kick"><i class="fa-solid fa-user-slash"></i> Kick</button>
-        <button class="btn btn-secondary" id="um-mute"><i class="fa-solid fa-volume-xmark"></i> Mute</button>
-        <select id="um-mute-mins" class="table-filter" style="max-width:130px">
-          <option value="30">30 min</option>
-          <option value="60" selected>1 hour</option>
-          <option value="720">12 hours</option>
-          <option value="1440">1 day</option>
-          <option value="10080">1 week</option>
-        </select>
-        <button class="btn btn-outline" id="um-reset"><i class="fa-solid fa-rotate-left"></i> Reset warnings</button>
+        <span class="um-mute-group">
+          <button class="btn btn-secondary" id="um-mute"><i class="fa-solid fa-volume-xmark"></i> Mute</button>
+          <select id="um-mute-mins" aria-label="Mute duration">
+            <option value="30">30 min</option>
+            <option value="60" selected>1 hour</option>
+            <option value="720">12 hours</option>
+            <option value="1440">1 day</option>
+            <option value="10080">1 week</option>
+          </select>
+        </span>
+        <button class="btn btn-outline um-tertiary" id="um-reset"><i class="fa-solid fa-rotate-left"></i> Reset warnings</button>
       </div>
 
       <div class="um-history">
         <h4>History</h4>
-        <div id="um-history-body"><p class="text-muted">No records.</p></div>
+        <div class="um-history-scroll"><div id="um-history-body"><p class="text-muted">No records.</p></div></div>
       </div>
     </div>
   </div>

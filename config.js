@@ -218,7 +218,11 @@ const DEFAULT_SETTINGS = {
     // When banning, also delete EVERY message the user has posted in the group
     // (Telegram banChatMember revoke_messages). Makes a spammer's whole burst
     // vanish in one shot instead of leaving the other messages behind.
-    revokeMessagesOnBan: true
+    revokeMessagesOnBan: true,
+    // Master switch: group admins and the owner are never moderated by any rule.
+    // This overrides every per-rule enforceOnAdmins flag, so there is exactly one
+    // place to look when an admin's message gets touched.
+    exemptAdmins: true
   },
   antiAdultEmoji: {
     enabled: true,
@@ -333,7 +337,7 @@ function mergeWithDefaults(stored) {
 
 // Bump when a saved setting must be corrected on existing installs. Stored
 // values normally win over defaults, so changing a default alone is not enough.
-const SETTINGS_SCHEMA_VERSION = 5;
+const SETTINGS_SCHEMA_VERSION = 6;
 
 // v3 briefly shipped these as blacklist entries. They are ordinary English words
 // that fire on innocent chat ("lets play now a game"), so v4 removes them again.
@@ -385,6 +389,21 @@ function migrateSettings(s) {
     s.contentTypes.blockContacts = true;
     changed = true;
     logEvent('INFO', '⚙️ Shared contact cards are now blocked (common phone/WeChat spam vector).');
+  }
+
+  // v6: one master switch for admin exemption. Existing installs had it spread
+  // across per-rule enforceOnAdmins flags, so an admin could still be moderated
+  // by whichever rule still had the flag on (profanity, adult emoji). Turn the
+  // master switch on and clear the stragglers so "admins are exempt" is true.
+  if (!s.enforcement) s.enforcement = {};
+  if (s.enforcement.exemptAdmins !== false) {
+    s.enforcement.exemptAdmins = true;
+    for (const section of ['profanity', 'antiAdultEmoji', 'antiMedia', 'antiForward',
+                           'antiMention', 'antiLink', 'antiPreview', 'antiPremiumEmoji', 'contentTypes']) {
+      if (s[section] && s[section].enforceOnAdmins === true) s[section].enforceOnAdmins = false;
+    }
+    changed = true;
+    logEvent('INFO', '⚙️ Group admins and the owner are now exempt from every moderation rule.');
   }
 
   s._schemaVersion = SETTINGS_SCHEMA_VERSION;

@@ -1170,6 +1170,8 @@ async function checkAntiPreview(ctx, settings) {
 // -------- Lock chat: drop any non-admin message when locked ----------
 async function checkLockChat(ctx, settings) {
   if (!settings.lockChat || !settings.lockChat.locked) return false;
+  // A lock silences members, never the people running the group.
+  if (await isAdminCached(ctx, ctx.from && ctx.from.id)) return false;
   try { await ctx.deleteMessage(); } catch (e) {}
   config.logEvent('LOCK', `Dropped message from ${displayName(ctx.from)} (chat locked)`);
   return true;
@@ -2243,21 +2245,32 @@ function initBot(token, opts = {}) {
       // so e.g. a Korean group can allow Hangul while others block it.
       const settings = config.getSettingsForChat(ctx.chat.id);
       const senderIsAdmin = await isAdminCached(ctx, ctx.from.id);
-      // A rule can opt admins back in via enforceOnAdmins
-      const skip = (rule) => senderIsAdmin && !(rule && rule.enforceOnAdmins);
+      // Master switch (enforcement.exemptAdmins) wins over every per-rule flag.
+      const exemptAdmins = !(settings.enforcement && settings.enforcement.exemptAdmins === false);
+      const skip = (rule) => senderIsAdmin && (exemptAdmins || !(rule && rule.enforceOnAdmins));
 
       try {
-        // Always-on (lockChat + pending captcha apply to everyone)
         if (await checkLockChat(ctx, settings)) return;
+        // Channels posting into the group must be checked BEFORE the admin
+        // exit: a channel post arrives under Telegram's service account, whose
+        // "admin" status is meaningless, so a spam channel would otherwise walk
+        // straight through. Anonymous admins and the linked channel are already
+        // whitelisted inside this check.
+        if (await checkAntiSenderChat(ctx, settings)) return;
+
+        // Admins and the owner are exempt from every rule below — no deletes,
+        // no warnings, no captcha, nothing.
+        if (senderIsAdmin && exemptAdmins) {
+          config.incrementStat('messagesProcessed');
+          return;
+        }
+
         if (await checkAlreadyRemoved(ctx)) return; // already banned → just delete leftovers
         if (await checkPendingCaptcha(ctx)) return;
-        // Channels posting into the group — must run before the admin check,
-        // because channel posts arrive under Telegram's service account whose
-        // "admin" status is meaningless.
-        if (await checkAntiSenderChat(ctx, settings)) return;
         if (await checkAntiBotPoster(ctx, settings)) return;
 
-        // Content rules — enforceOnAdmins by default
+        // Content rules — per-rule enforceOnAdmins applies only when the
+        // master exemption is switched off.
         if (!skip(settings.contentTypes) && await checkContentTypes(ctx, settings)) return;
         if (!skip(settings.antiPremiumEmoji) && await checkAntiPremiumEmoji(ctx, settings)) return;
         if (!skip(settings.antiLink) && await checkAntiLink(ctx, settings)) return;
@@ -2303,10 +2316,12 @@ function initBot(token, opts = {}) {
 
       const settings = config.getSettingsForChat(ctx.chat.id);
       const senderIsAdmin = await isAdminCached(ctx, ctx.from.id);
-      const skip = (rule) => senderIsAdmin && !(rule && rule.enforceOnAdmins);
+      const exemptAdmins = !(settings.enforcement && settings.enforcement.exemptAdmins === false);
+      const skip = (rule) => senderIsAdmin && (exemptAdmins || !(rule && rule.enforceOnAdmins));
       try {
         if (await checkAlreadyRemoved(ctx)) return;
         if (await checkAntiSenderChat(ctx, settings)) return;
+        if (senderIsAdmin && exemptAdmins) return;
         if (!skip(settings.contentTypes) && await checkContentTypes(ctx, settings)) return;
         if (!skip(settings.antiPremiumEmoji) && await checkAntiPremiumEmoji(ctx, settings)) return;
         if (!skip(settings.antiLink) && await checkAntiLink(ctx, settings)) return;
