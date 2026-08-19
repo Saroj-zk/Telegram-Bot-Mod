@@ -255,6 +255,23 @@ function extractButtonText(message) {
   return parts.join(' ');
 }
 
+// Telegram does not always deliver a message from the real author. An admin
+// using "Remain Anonymous" arrives as @GroupAnonymousBot, a channel posting
+// arrives as @Channel_Bot, and service notices come from 777000. None of these
+// is "a bot spamming the group": anonymous admins ARE the group's own staff,
+// and channel posts are handled by checkAntiSenderChat (banChatMember does not
+// even work on a channel -- banChatSenderChat is the correct weapon).
+const ANONYMOUS_ADMIN_ID = 1087968824;   // @GroupAnonymousBot
+const TELEGRAM_SERVICE_IDS = new Set([ANONYMOUS_ADMIN_ID, 777000, 136817688]);
+
+// An admin posting anonymously: Telegram sets sender_chat to the group itself.
+// Only admins can do this, so it is a reliable admin signal.
+function isAnonymousAdmin(ctx) {
+  const sc = ctx.message && ctx.message.sender_chat;
+  return !!(sc && ctx.chat && sc.id === ctx.chat.id);
+}
+
+let adminLookupWarnedAt = 0;
 async function isAdminCached(ctx, userId) {
   const key = `${ctx.chat.id}:${userId}`;
   const cached = adminCache[key];
@@ -265,7 +282,15 @@ async function isAdminCached(ctx, userId) {
     adminCache[key] = { isAdmin, ts: nowMs() };
     return isAdmin;
   } catch (err) {
-    return false;
+    // Fail safe. Returning false here used to mean a hiccup in getChatMember
+    // silently demoted the owner to an ordinary member and ate their message.
+    // Skipping moderation for one message is the cheaper mistake -- but log it,
+    // so a persistent failure is visible instead of quietly disabling the bot.
+    if (nowMs() - adminLookupWarnedAt > 60000) {
+      adminLookupWarnedAt = nowMs();
+      config.logEvent('ERROR', `Could not check admin status in “${ctx.chat && ctx.chat.title || 'the group'}” (${err.message}). Treating the sender as an admin so nothing is wrongly deleted.`);
+    }
+    return true;
   }
 }
 
@@ -1449,6 +1474,11 @@ async function checkContentTypes(ctx, settings) {
 // -------- Anti-Bot-Poster: any non-whitelisted bot posting → delete + ban ----------
 async function checkAntiBotPoster(ctx, settings) {
   if (!ctx.from || !ctx.from.is_bot) return false;
+  // An anonymous admin, a channel post, or a service notice -- not a spam bot.
+  if (TELEGRAM_SERVICE_IDS.has(ctx.from.id)) return false;
+  // Anything carrying sender_chat belongs to checkAntiSenderChat, which runs
+  // earlier and has already decided this message is allowed.
+  if (ctx.message && ctx.message.sender_chat) return false;
   const s = settings.antiBotPoster;
   if (!s || !s.enabled) return false;
 
@@ -2244,7 +2274,9 @@ function initBot(token, opts = {}) {
       // Per-group settings: global rules with this chat's overrides applied,
       // so e.g. a Korean group can allow Hangul while others block it.
       const settings = config.getSettingsForChat(ctx.chat.id);
-      const senderIsAdmin = await isAdminCached(ctx, ctx.from.id);
+      // An owner posting anonymously arrives as @GroupAnonymousBot, whose own
+      // membership status is meaningless -- the sender_chat is the admin signal.
+      const senderIsAdmin = isAnonymousAdmin(ctx) || await isAdminCached(ctx, ctx.from.id);
       // Master switch (enforcement.exemptAdmins) wins over every per-rule flag.
       const exemptAdmins = !(settings.enforcement && settings.enforcement.exemptAdmins === false);
       const skip = (rule) => senderIsAdmin && (exemptAdmins || !(rule && rule.enforceOnAdmins));
@@ -2315,7 +2347,7 @@ function initBot(token, opts = {}) {
       if (txt.startsWith('/')) return;
 
       const settings = config.getSettingsForChat(ctx.chat.id);
-      const senderIsAdmin = await isAdminCached(ctx, ctx.from.id);
+      const senderIsAdmin = isAnonymousAdmin(ctx) || await isAdminCached(ctx, ctx.from.id);
       const exemptAdmins = !(settings.enforcement && settings.enforcement.exemptAdmins === false);
       const skip = (rule) => senderIsAdmin && (exemptAdmins || !(rule && rule.enforceOnAdmins));
       try {
