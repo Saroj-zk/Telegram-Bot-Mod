@@ -344,6 +344,69 @@ async function actionReply(ctx, text, opts = {}) {
   } catch (e) { return null; }
 }
 
+// -------- Bulk message deletion (used by /purge and /purge_after) --------
+// Telegram's deleteMessages removes up to 100 messages per call, so a 1,000
+// message purge costs 10 API calls instead of 1,000. The old one-at-a-time loop
+// tripped the rate limiter partway through and swallowed every error, so it
+// silently under-deleted and reported a number that looked like success.
+const PURGE_CHUNK = 100;
+const PURGE_MAX = 3000;
+const PURGE_PAUSE_MS = 350;   // breathing room between chunks
+
+function waitMs(ms) { return new Promise(r => setTimeout(r, ms)); }
+function retryAfterOf(err) {
+  const p = err && (err.parameters || (err.response && err.response.parameters));
+  return p && p.retry_after ? p.retry_after : null;
+}
+
+// Deletes one chunk of ids. Falls back to individual deletes when the bulk call
+// is rejected, so a single undeletable id (already gone, service message) can't
+// sink the other 99. Honours 429 retry_after instead of dropping the work.
+async function purgeChunk(telegram, chatId, ids, depth = 0) {
+  try {
+    await telegram.deleteMessages(chatId, ids);
+    return { removed: ids.length, failed: 0, blocked: null };
+  } catch (err) {
+    const retry = retryAfterOf(err);
+    if (retry && depth < 3) {
+      await waitMs((retry + 1) * 1000);
+      return purgeChunk(telegram, chatId, ids, depth + 1);
+    }
+    let removed = 0, failed = 0, blocked = null;
+    for (const id of ids) {
+      try {
+        await telegram.deleteMessage(chatId, id);
+        removed++;
+      } catch (e) {
+        const r2 = retryAfterOf(e);
+        if (r2) {
+          await waitMs((r2 + 1) * 1000);
+          try { await telegram.deleteMessage(chatId, id); removed++; continue; } catch (e2) {}
+        }
+        // Remember a rights problem so the operator is told WHY nothing vanished.
+        if (!blocked && /not enough rights|CHAT_ADMIN_REQUIRED|can't be deleted/i.test(e.message || '')) {
+          blocked = e.message;
+        }
+        failed++;
+      }
+    }
+    return { removed, failed, blocked };
+  }
+}
+
+async function runPurge(ctx, startId, endId) {
+  const ids = [];
+  for (let id = startId; id <= endId; id++) ids.push(id);
+  let removed = 0, failed = 0, blocked = null;
+  for (let i = 0; i < ids.length; i += PURGE_CHUNK) {
+    const r = await purgeChunk(ctx.telegram, ctx.chat.id, ids.slice(i, i + PURGE_CHUNK));
+    removed += r.removed; failed += r.failed;
+    if (!blocked && r.blocked) blocked = r.blocked;
+    if (i + PURGE_CHUNK < ids.length) await waitMs(PURGE_PAUSE_MS);
+  }
+  return { span: ids.length, removed, failed, blocked };
+}
+
 // Map a stat key → log level so each violation type has its own filterable channel.
 const STAT_TO_LEVEL = {
   spamBlocked: 'FLOOD',
@@ -2155,24 +2218,45 @@ function initBot(token, opts = {}) {
       actionReply(ctx, `✅ Cleared all warnings for ${target.username}.`);
     }));
 
-    bot.command('purge', adminOnly(async (ctx) => {
+    // /purge        — deletes the replied message and everything after it
+    // /purge_after  — keeps the replied message, deletes everything after it
+    async function purgeCommand(ctx, keepAnchor) {
       const reply = ctx.message.reply_to_message;
-      if (!reply) return actionReply(ctx, `❌ Reply to the first message you want to delete.`);
-      const start = reply.message_id;
+      if (!reply) {
+        return actionReply(ctx, keepAnchor
+          ? '❌ Reply to the last message you want to KEEP, then send /purge_after.'
+          : '❌ Reply to the first message you want DELETED, then send /purge.');
+      }
+      const start = reply.message_id + (keepAnchor ? 1 : 0);
       const end = ctx.message.message_id;
-      const range = end - start;
-      if (range > 500) {
-        return actionReply(ctx, `❌ Range too large (${range} messages). Cap is 500.`);
+      const span = end - start + 1;
+      if (span < 1) return actionReply(ctx, 'ℹ️ Nothing to delete after that message.');
+      if (span > PURGE_MAX) {
+        return actionReply(ctx,
+          `❌ That range is ${span.toLocaleString()} messages — the cap is ${PURGE_MAX.toLocaleString()}. ` +
+          `Reply to a more recent message, or run it a few times working backwards.`);
       }
-      let deleted = 0;
-      for (let id = start; id <= end; id++) {
-        try {
-          await ctx.telegram.deleteMessage(ctx.chat.id, id);
-          deleted++;
-        } catch (e) {}
+
+      const started = Date.now();
+      const r = await runPurge(ctx, start, end);
+      const secs = Math.round((Date.now() - started) / 1000);
+
+      if (r.blocked) {
+        config.logEvent('ERROR', `/purge blocked in “${ctx.chat.title || 'the group'}”: ${r.blocked}`);
+        return actionReply(ctx, `❌ Could not delete — the bot needs the "Delete Messages" admin right here.`);
       }
-      actionReply(ctx, `🧹 Purged ${deleted} messages.`);
-    }));
+      // Say what actually happened. Gaps in the id range are messages that were
+      // already gone, so they are not failures worth alarming anyone about.
+      let msg = `🧹 Swept ${r.span.toLocaleString()} messages in ${secs}s.`;
+      if (r.failed) msg += ` ${r.failed.toLocaleString()} could not be removed.`;
+      config.logEvent('DELETE',
+        `🧹 ${displayName(ctx.from)} purged ${r.span} message(s) in “${ctx.chat.title || 'the group'}”` +
+        (r.failed ? ` — ${r.failed} could not be removed.` : '.'));
+      actionReply(ctx, msg);
+    }
+
+    bot.command('purge', adminOnly((ctx) => purgeCommand(ctx, false)));
+    bot.command('purge_after', adminOnly((ctx) => purgeCommand(ctx, true)));
 
     // Delete exactly ONE message: reply to it with /del. For old spam the bot
     // never witnessed (posted while it was offline) — replying hands the bot
@@ -2674,7 +2758,8 @@ Users muted: ${s.usersMuted}`,
 `🛡️ *OctoGod commands* (admin-only)
 
 /ban /unban /gban /ungban /kick /mute [min] /unmute /warn /clearwarns
-/userinfo /nuke (reply) /del (reply) /purge (reply) /stats /status
+/userinfo /nuke (reply) /del (reply) /stats /status
+/purge (reply) /purge_after (reply)
 /id /ping /rules /report (reply)
 /lock /unlock_chat /unraid
 /blockemoji (reply) /unblockemoji <id>
