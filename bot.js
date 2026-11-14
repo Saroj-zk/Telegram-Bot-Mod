@@ -1258,7 +1258,9 @@ async function checkAntiPreview(ctx, settings) {
 // -------- Lock chat: drop any non-admin message when locked ----------
 async function checkLockChat(ctx, settings) {
   if (!settings.lockChat || !settings.lockChat.locked) return false;
-  // A lock silences members, never the people running the group.
+  // A lock silences members, never the people running the group — including an
+  // owner posting anonymously, who arrives as @GroupAnonymousBot.
+  if (isAnonymousAdmin(ctx)) return false;
   if (await isAdminCached(ctx, ctx.from && ctx.from.id)) return false;
   try { await ctx.deleteMessage(); } catch (e) {}
   config.logEvent('LOCK', `Dropped message from ${displayName(ctx.from)} (chat locked)`);
@@ -2065,13 +2067,20 @@ function initBot(token, opts = {}) {
           if (!commandRateOk(ctx.from.id)) return; // silent rate-limit drop
           // PM owner is allowed (gated earlier); for groups require admin.
           if (ctx.chat.type !== 'private') {
-            const ok = await isAdminCached(ctx, ctx.from.id);
+            // An admin with "Remain Anonymous" on sends as @GroupAnonymousBot,
+            // whose own membership is not admin — checking ctx.from.id alone
+            // silently swallowed every command an anonymous owner typed.
+            const anon = isAnonymousAdmin(ctx);
+            const ok = anon || await isAdminCached(ctx, ctx.from.id);
             if (!ok) {
               try { await ctx.deleteMessage(); } catch (e) {}
               return; // silent: don't reveal command exists
             }
           }
-          config.logEvent('COMMAND', `${displayName(ctx.from)} ran ${(ctx.message.text || '').split(' ')[0]}`);
+          const who = isAnonymousAdmin(ctx)
+            ? `an anonymous admin of “${ctx.chat.title || 'the group'}”`
+            : displayName(ctx.from);
+          config.logEvent('COMMAND', `${who} ran ${(ctx.message.text || '').split(' ')[0]}`);
           return await handler(ctx);
         } catch (err) {
           config.logEvent('ERROR', `Admin command crashed: ${err.message}`);
