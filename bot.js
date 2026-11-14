@@ -586,18 +586,28 @@ async function checkAntiFlood(ctx, settings) {
   messageTimestamps[userId].push(now);
   messageTimestamps[userId] = messageTimestamps[userId].filter(t => now - t < settings.antiSpam.intervalMs);
 
-  // Duplicate detection
+  // Duplicate detection. Deliberately NOT tied to the rate window: advert spam
+  // reposts the identical message hours apart, which a 12-second window never
+  // sees. Keyed by user across all groups on purpose, so a bot dropping the
+  // same ad into four groups trips the limit faster, not slower.
   if (!messageHashes[userId]) messageHashes[userId] = [];
-  if (text) {
+  const dupWindow = settings.antiSpam.duplicateWindowMs || 21600000;   // 6h
+  const dupMinLen = settings.antiSpam.duplicateMinLength != null
+    ? settings.antiSpam.duplicateMinLength : 15;
+  if (text && text.length >= dupMinLen) {
     const h = hashMessage(text);
     messageHashes[userId].push({ ts: now, hash: h });
-    messageHashes[userId] = messageHashes[userId].filter(e => now - e.ts < settings.antiSpam.intervalMs * 4);
+    messageHashes[userId] = messageHashes[userId].filter(e => now - e.ts < dupWindow);
+    // Cap memory: a long window across 30k members must not grow without bound.
+    if (messageHashes[userId].length > 60) {
+      messageHashes[userId] = messageHashes[userId].slice(-60);
+    }
     const sameCount = messageHashes[userId].filter(e => e.hash === h).length;
     if (sameCount >= (settings.antiSpam.duplicateLimit || 3)) {
       await applyAction(ctx, {
         action: settings.antiSpam.action,
         reason: 'duplicate flood',
-        warnReason: 'sending the same message repeatedly',
+        warnReason: 'posting the same message over and over',
         statKey: 'spamBlocked'
       });
       return true;

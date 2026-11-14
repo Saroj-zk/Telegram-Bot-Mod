@@ -83,7 +83,12 @@ const SCAM_KEYWORDS = [
   "withdraw instantly", "instant withdrawal", "guaranteed win", "sure win",
   "online casino", "casino bonus", "betting site", "betting bot", "gambling site",
   "1xbet", "bcgame", "bc game", "stake com", "melbet", "parimatch", "mostbet",
-  "betwinner", "linebet", "pin up casino", "1win", "22bet"
+  "betwinner", "linebet", "pin up casino", "1win", "22bet",
+  // Chinese "API relay station" resale ads (8sToken and copycats). Deliberately
+  // narrow: multi-character commercial jargon that does not occur in ordinary
+  // chat. Single words like 满血 or 稳定 are NOT listed -- they are normal Chinese.
+  "api中转站", "api中转", "不降智", "量大有优惠", "量大优惠",
+  "稳定分组", "官key", "接企业", "源头稳定", "中转api"
 ];
 
 const DEFAULT_SETTINGS = {
@@ -104,7 +109,11 @@ const DEFAULT_SETTINGS = {
     maxMessages: 5,
     intervalMs: 3000,
     action: "warn", // warn, mute, kick, ban
-    duplicateLimit: 3 // identical messages within window trigger spam
+    duplicateLimit: 3,            // identical messages within the window below
+    // Advert spam reposts the SAME text hours apart. The rate window (3s) never
+    // sees that, so duplicates get their own, far longer window.
+    duplicateWindowMs: 21600000,  // 6 hours
+    duplicateMinLength: 15        // ignore "gm"/"ok"/short reactions
   },
   antiLink: {
     enabled: true,
@@ -337,7 +346,7 @@ function mergeWithDefaults(stored) {
 
 // Bump when a saved setting must be corrected on existing installs. Stored
 // values normally win over defaults, so changing a default alone is not enough.
-const SETTINGS_SCHEMA_VERSION = 6;
+const SETTINGS_SCHEMA_VERSION = 7;
 
 // v3 briefly shipped these as blacklist entries. They are ordinary English words
 // that fire on innocent chat ("lets play now a game"), so v4 removes them again.
