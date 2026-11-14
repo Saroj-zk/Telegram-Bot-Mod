@@ -3121,6 +3121,27 @@ let onScanProgress = null;
 function registerScanProgress(cb) { onScanProgress = typeof cb === 'function' ? cb : null; }
 function emitProgress(payload) { if (onScanProgress) { try { onScanProgress(payload); } catch (e) {} } }
 
+// The scan works off the message cache, so there is no ctx to check admin
+// status against — which is how it deleted an anonymous admin's link in I5 Labs.
+// Resolve the sender here instead, honouring the same exemptAdmins switch.
+async function scanSenderIsExempt(telegram, chatId, userId, settings) {
+  if (settings.enforcement && settings.enforcement.exemptAdmins === false) return false;
+  if (!userId) return false;
+  // Anonymous admins and channel posts arrive under Telegram's routing accounts.
+  if (TELEGRAM_SERVICE_IDS.has(Number(userId))) return true;
+  const key = `${chatId}:${userId}`;
+  const cached = adminCache[key];
+  if (cached && nowMs() - cached.ts < ADMIN_CACHE_MS) return cached.isAdmin;
+  try {
+    const member = await telegram.getChatMember(chatId, userId);
+    const isAdmin = ['creator', 'administrator'].includes(member.status);
+    adminCache[key] = { isAdmin, ts: nowMs() };
+    return isAdmin;
+  } catch (e) {
+    return true;   // cannot verify → never delete; a missed message beats eating an admin's
+  }
+}
+
 async function runRoutineScan(opts = {}) {
   const tg = anyBot();
   if (!tg) return { ok: false, error: 'bot_not_running' };
@@ -3142,6 +3163,7 @@ async function runRoutineScan(opts = {}) {
     deleted: 0,
     errors: 0,
     alreadyGone: 0,
+    skippedAdmin: 0,
     byRule: {},
     byChat: {},
     sampleDeletes: [],
@@ -3155,6 +3177,10 @@ async function runRoutineScan(opts = {}) {
     summary.scanned++;
     const verdict = evaluateCacheEntry(entry, settings);
     if (verdict) {
+      if (await scanSenderIsExempt(tg.telegram, entry.chatId, entry.userId, settings)) {
+        summary.skippedAdmin++;
+        continue;
+      }
       try {
         await tg.telegram.deleteMessage(entry.chatId, entry.messageId);
         summary.deleted++;
