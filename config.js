@@ -88,7 +88,14 @@ const SCAM_KEYWORDS = [
   // narrow: multi-character commercial jargon that does not occur in ordinary
   // chat. Single words like 满血 or 稳定 are NOT listed -- they are normal Chinese.
   "api中转站", "api中转", "不降智", "量大有优惠", "量大优惠",
-  "稳定分组", "官key", "接企业", "源头稳定", "中转api"
+  "稳定分组", "官key", "接企业", "源头稳定", "中转api",
+  // Second wave: bulk account/key resale shilling a bot. Again narrow --
+  // trade jargon, not words that appear in ordinary conversation.
+  "大额官key", "跑付", "质保刷完", "有量来谈", "现货批发", "大额支持",
+  "看主页", "机器人主页", "全模型官key", "官方key出售",
+  "ccmax", "awsb", "gpt20x", "ccmax20x", "oai官key",
+  "official keys", "rmb per unit", "bulk ccmax",
+  "does not accept private messages", "click on my profile picture"
 ];
 
 const DEFAULT_SETTINGS = {
@@ -218,6 +225,11 @@ const DEFAULT_SETTINGS = {
     enabled: true,
     maxCombiningChars: 30,    // overall U+0300..U+036F count
     blockRtlOverride: true,   // U+202E and friends
+    // Farming bots stuff Unicode Tag characters between every letter so each
+    // message hashes differently and slips past duplicate detection. These have
+    // no legitimate use in chat outside 🏴 flag emoji, which are excluded.
+    blockTagChars: true,
+    maxInvisibleChars: 4,     // zero-width/format budget (emoji ZWJ excluded)
     action: "delete_and_warn"
   },
   lockChat: {
@@ -266,7 +278,11 @@ const DEFAULT_SETTINGS = {
     cacheSizeLimit: 10000,        // max messages to retain in db/messages.json
     cacheTtlDays: 7,              // automatic pruning age
     scanIntervalDelayMs: 35,      // throttle between deletes so Telegram doesn't rate-limit
-    autoIntervalHours: 0          // >0 = run a scan automatically every N hours
+    autoIntervalHours: 0,         // >0 = run a scan automatically every N hours
+    // Absolute floor: the scan will never delete anything posted before this,
+    // no matter how large a window is requested. Set so historical group
+    // conversation is left alone and only current spam is swept.
+    notBefore: "2026-11-17T00:00:00.000Z"
   },
   newUserRestrictions: {
     enabled: true,
@@ -346,7 +362,7 @@ function mergeWithDefaults(stored) {
 
 // Bump when a saved setting must be corrected on existing installs. Stored
 // values normally win over defaults, so changing a default alone is not enough.
-const SETTINGS_SCHEMA_VERSION = 7;
+const SETTINGS_SCHEMA_VERSION = 9;
 
 // v3 briefly shipped these as blacklist entries. They are ordinary English words
 // that fire on innocent chat ("lets play now a game"), so v4 removes them again.

@@ -218,14 +218,24 @@ function normalizeForMatch(s) {
 
 // Returns the offending blacklist word if `text` (or its leetspeak-normalized form)
 // contains a blacklisted token. Tries both passes so emoji-only entries still match.
+// normalizeForMatch() strips everything outside [a-z0-9], so CJK keywords
+// survive only via the literal comparison below. That let "官 Key" walk past
+// "官key". For keywords containing CJK we also compare with all whitespace
+// removed, which is safe precisely because Chinese does not space its words --
+// doing the same for Latin would make "a pi" match "api".
+const CJK_KEYWORD_RE = /[㐀-鿿豈-﫿぀-ヿ]/;
+const squashSpace = (x) => x.replace(/\s+/g, '');
+
 function findBlacklistHit(text, blacklist) {
   if (!text) return null;
   const lower = text.toLowerCase();
+  const squashed = squashSpace(lower);
   const normalized = normalizeForMatch(text);
   for (const word of blacklist) {
     if (!word) continue;
     const wl = word.toLowerCase();
     if (lower.includes(wl)) return word;
+    if (CJK_KEYWORD_RE.test(word) && squashed.includes(squashSpace(wl))) return word;
     const wNorm = normalizeForMatch(word);
     if (wNorm.length >= 3 && normalized.includes(wNorm)) return word;
   }
@@ -1162,10 +1172,69 @@ async function checkAntiPremiumEmoji(ctx, settings) {
   return false;
 }
 
+// -------- Unicode obfuscation --------
+// Tag characters (U+E0000..U+E007F) are invisible and have no place in chat.
+// Their only real use is inside a flag emoji sequence, so strip those first and
+// treat whatever remains as deliberate evasion. Farming bots wedge them between
+// every character so "签到" posted 200 times hashes 200 different ways.
+const FLAG_SEQUENCE_RE = /\u{1F3F4}[\u{E0020}-\u{E007F}]+/gu;
+// Covers the whole invisible supplementary area: Tags (E0000-E007F), the
+// reserved gap the farmers also use (E0080-E00FF), and Variation Selectors
+// Supplement (E0100-E01EF). Real flag emoji are stripped before this runs.
+const TAG_CHAR_RE = /[\u{E0000}-\u{E01EF}]/gu;
+const MUSICAL_FORMAT_RE = /[\u{1D173}-\u{1D17A}]/gu;
+// Zero-width / format characters. U+200D (ZWJ) and U+FE0F are deliberately NOT
+// here: both are required by ordinary emoji such as 👨‍👩‍👧 and ❤️.
+const INVISIBLE_RE = /[\u00AD\u200B\u200C\u200E\u200F\u2060-\u2064\u206A-\u206F\uFFF9-\uFFFB]/g;
+
+function countTagChars(text) {
+  const withoutFlags = String(text).replace(FLAG_SEQUENCE_RE, '');
+  return (withoutFlags.match(TAG_CHAR_RE) || []).length +
+         (withoutFlags.match(MUSICAL_FORMAT_RE) || []).length;
+}
+function countInvisibleChars(text) {
+  return (String(text).match(INVISIBLE_RE) || []).length;
+}
+
+// -------- API-reseller price lists --------
+// Keyword lists lose to pinyin substitution (源头 -> 源tou, 低价 -> 低jia).
+// The structure does not change: a wall of model names against multipliers.
+const AI_MODEL_RE = /(gpt|claude|gemini|deepseek|kiro|grok|llama|qwen|kling|sora|midjourney)/gi;
+const PRICE_MULT_RE = /(?:[x×]\s*\d*\.\d+|\d*\.\d+\s*[x×])/g;
+// The second wave prices per unit instead of as a multiplier:
+// "Claude official keys = 3.9 RMB per unit", "Awsb全模型官Key=2.1人民币一刀".
+const PRICE_UNIT_RE = /\d+(?:\.\d+)?\s*(?:rmb|人民币|usdt|u|元|刀)/gi;
+// Runs of arrows pointing at a profile or bot — "←←←看主.页", "→→→ @somebot".
+const ARROW_RUN_RE = /[←-↙➡⬅⮕]{3,}/g;
+
+function looksLikeApiPriceList(text) {
+  if (!text) return false;
+  const str = String(text);
+  const models = new Set((str.match(AI_MODEL_RE) || []).map(m => m.toLowerCase()));
+  const prices = (str.match(PRICE_MULT_RE) || []).length +
+                 (str.match(PRICE_UNIT_RE) || []).length;
+  if (models.size >= 2 && prices >= 3) return true;
+  // Arrow runs herding readers to a bot or profile are advertising, not chat.
+  // Paired with a model name or an @handle so ordinary arrow use is spared.
+  const arrows = (str.match(ARROW_RUN_RE) || []).length;
+  if (arrows >= 2 && (models.size >= 1 || /@[A-Za-z0-9_]{4,}/.test(str))) return true;
+  return false;
+}
+
 async function checkProfanity(ctx, settings) {
   if (!settings.profanity.enabled) return false;
   const text = extractText(ctx.message);
   if (!text) return false;
+  if (settings.profanity.blockApiPriceLists !== false && looksLikeApiPriceList(text)) {
+    await applyAction(ctx, {
+      action: settings.profanity.action,
+      reason: 'API reseller price list',
+      warnReason: 'advertising API resale pricing is not allowed here',
+      statKey: 'profanityDeleted'
+    });
+    return true;
+  }
+
   const hit = findBlacklistHit(text, settings.profanity.blacklist || []);
   if (!hit) return false;
 
@@ -1375,6 +1444,31 @@ async function checkAntiZalgo(ctx, settings) {
     });
     return true;
   }
+  if (settings.antiZalgo.blockTagChars !== false) {
+    const tags = countTagChars(text);
+    if (tags > 0) {
+      await applyAction(ctx, {
+        action: settings.antiZalgo.action,
+        reason: `invisible tag characters (${tags})`,
+        warnReason: 'hidden/invisible characters are not allowed',
+        statKey: 'zalgoBlocked'
+      });
+      return true;
+    }
+  }
+  const invisible = countInvisibleChars(text);
+  const invisibleCap = settings.antiZalgo.maxInvisibleChars != null
+    ? settings.antiZalgo.maxInvisibleChars : 4;
+  if (invisible > invisibleCap) {
+    await applyAction(ctx, {
+      action: settings.antiZalgo.action,
+      reason: `invisible characters (${invisible})`,
+      warnReason: 'hidden/invisible characters are not allowed',
+      statKey: 'zalgoBlocked'
+    });
+    return true;
+  }
+
   const combining = countCombining(text);
   if (combining > (settings.antiZalgo.maxCombiningChars || 30)) {
     await applyAction(ctx, {
@@ -3168,7 +3262,16 @@ async function runRoutineScan(opts = {}) {
   const requested = parseInt(opts.hours, 10);
   const defaultHours = (settings.routineScan && settings.routineScan.defaultDurationHours) || 24;
   const hours = Math.max(1, Math.min(isNaN(requested) ? defaultHours : requested, max));
-  const cutoff = Date.now() - hours * 3600 * 1000;
+  let cutoff = Date.now() - hours * 3600 * 1000;
+  // Never reach back past the configured floor, however big a window is asked
+  // for. Live moderation of new messages is unaffected — this only limits how
+  // far the retroactive sweep is allowed to go.
+  const floorIso = settings.routineScan && settings.routineScan.notBefore;
+  const floor = floorIso ? Date.parse(floorIso) : NaN;
+  if (!isNaN(floor) && floor > cutoff) {
+    cutoff = floor;
+    config.logEvent('INFO', `🧹 Scan window clamped to ${new Date(floor).toISOString().slice(0, 10)} — older messages are left alone.`);
+  }
   const delayMs = (settings.routineScan && settings.routineScan.scanIntervalDelayMs) || 35;
 
   const candidates = config.getMessagesSince(cutoff);
