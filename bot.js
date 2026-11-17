@@ -271,6 +271,17 @@ function isAnonymousAdmin(ctx) {
   return !!(sc && ctx.chat && sc.id === ctx.chat.id);
 }
 
+// A post auto-forwarded from the group's OWN linked channel (the announcement
+// channel). Telegram sets is_automatic_forward only for the linked channel, so
+// a spam channel cannot fake it. These are the team's announcements, not member
+// chat: antiSenderChat already allowed them, but they then fell through to the
+// content rules and antiLink deleted them for containing a link.
+function isLinkedChannelPost(ctx, settings) {
+  if (!(ctx.message && ctx.message.is_automatic_forward)) return false;
+  const s = settings && settings.antiSenderChat;
+  return !s || s.allowLinkedChannel !== false;
+}
+
 let adminLookupWarnedAt = 0;
 async function isAdminCached(ctx, userId) {
   const key = `${ctx.chat.id}:${userId}`;
@@ -2393,6 +2404,12 @@ function initBot(token, opts = {}) {
         // whitelisted inside this check.
         if (await checkAntiSenderChat(ctx, settings)) return;
 
+        // The group's own announcement channel — never moderated.
+        if (isLinkedChannelPost(ctx, settings)) {
+          config.incrementStat('messagesProcessed');
+          return;
+        }
+
         // Admins and the owner are exempt from every rule below — no deletes,
         // no warnings, no captcha, nothing.
         if (senderIsAdmin && exemptAdmins) {
@@ -2456,6 +2473,7 @@ function initBot(token, opts = {}) {
       try {
         if (await checkAlreadyRemoved(ctx)) return;
         if (await checkAntiSenderChat(ctx, settings)) return;
+        if (isLinkedChannelPost(ctx, settings)) return;
         if (senderIsAdmin && exemptAdmins) return;
         if (!skip(settings.contentTypes) && await checkContentTypes(ctx, settings)) return;
         if (!skip(settings.antiPremiumEmoji) && await checkAntiPremiumEmoji(ctx, settings)) return;
