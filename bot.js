@@ -2555,6 +2555,13 @@ function initBot(token, opts = {}) {
       // Wrap edited_message as message for the same pipeline
       ctx.message = ctx.editedMessage || ctx.update.edited_message;
       if (!ctx.message) return;
+      // Mirror the edit into the cache, so a later scan judges what the message
+      // SAYS NOW rather than what it said when first posted.
+      if (ctx.chat && ctx.message.message_id) {
+        try {
+          config.updateCachedMessageText(ctx.chat.id, ctx.message.message_id, extractText(ctx.message));
+        } catch (e) {}
+      }
       if (!ctx.chat || ctx.chat.type === 'private') return;
       if (!ctx.from || ctx.from.is_bot) return;
       const txt = ctx.message.text || '';
@@ -3173,6 +3180,9 @@ function evaluateCacheEntry(entry, settings) {
   // Profanity / NSFW text + sticker emoji + file name
   if (settings.profanity && settings.profanity.enabled) {
     const blacklist = settings.profanity.blacklist || [];
+    if (settings.profanity.blockApiPriceLists !== false && looksLikeApiPriceList(entry.text)) {
+      return { rule: 'profanity', reason: 'API reseller price list', level: 'PROFANITY' };
+    }
     const hit = findBlacklistHit(entry.text, blacklist);
     if (hit) return { rule: 'profanity', reason: `keyword "${hit}"`, level: 'PROFANITY' };
     if (entry.stickerEmoji) {
@@ -3182,6 +3192,19 @@ function evaluateCacheEntry(entry, settings) {
     if (entry.documentName) {
       const h = findBlacklistHit(entry.documentName, blacklist);
       if (h) return { rule: 'profanity', reason: `file name "${h}"`, level: 'PROFANITY' };
+    }
+  }
+
+  // Invisible-character stuffing. The live pipeline catches this on arrival;
+  // the scan needs it too, or a backlog of farming spam sits there untouched.
+  if (settings.antiZalgo && settings.antiZalgo.enabled && entry.text) {
+    if (settings.antiZalgo.blockTagChars !== false && countTagChars(entry.text) > 0) {
+      return { rule: 'zalgo', reason: 'invisible tag characters', level: 'ZALGO' };
+    }
+    const invisCap = settings.antiZalgo.maxInvisibleChars != null
+      ? settings.antiZalgo.maxInvisibleChars : 4;
+    if (countInvisibleChars(entry.text) > invisCap) {
+      return { rule: 'zalgo', reason: 'invisible characters', level: 'ZALGO' };
     }
   }
 

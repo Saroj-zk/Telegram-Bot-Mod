@@ -1119,6 +1119,21 @@ function addMessageToCache(entry) {
 function getMessagesSince(timestamp) {
   return messageCache.filter(m => m && m.ts >= timestamp);
 }
+// An edit replaces the message's content, so the cache must follow it. Without
+// this the scan evaluates the text as originally posted, which is how adverts
+// edited in after the fact stayed invisible to every sweep.
+function updateCachedMessageText(chatId, messageId, text) {
+  let changed = false;
+  for (const m of messageCache) {
+    if (m && m.chatId === chatId && m.messageId === messageId) {
+      m.text = String(text || '').slice(0, 4096);
+      m.editedAt = Date.now();
+      changed = true;
+    }
+  }
+  if (changed) scheduleMessageCacheFlush();
+  return changed;
+}
 function removeMessageFromCache(chatId, messageId) {
   const before = messageCache.length;
   messageCache = messageCache.filter(m => !(m.chatId === chatId && m.messageId === messageId));
@@ -1289,6 +1304,7 @@ module.exports = {
   destroySession,
   // message cache + scans
   addMessageToCache,
+  updateCachedMessageText,
   getMessagesSince,
   removeMessageFromCache,
   recordScanResult,
